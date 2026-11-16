@@ -6,16 +6,19 @@ const REFRESCO_MS = 2 * 60 * 1000; // se actualiza cada 2 minutos con la app abi
 const TZ = "America/Montevideo";
 
 // ---------- limites de colores (se guardan en el celular) ----------
-const DEFECTO = { vAmar: 16, vNar: 22, vRojo: 34, gAmar: 25, gRojo: 34, rioMin: null, rioMax: null };
+const DEFECTO = { vAmar: 16, vNar: 22, vRojo: 34, gAmar: 25, gRojo: 34, rioMin: null };
+const MARGEN_RIO = 0.2; // amarillo hasta 0,2 m por encima del minimo
 const leerLocal = (k) => { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } };
 const guardarLocal = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* sin almacenamiento */ } };
 let lim = { ...DEFECTO, ...(leerLocal("limites") ?? {}) };
 
 const colorViento = (v) => v == null ? "" : v >= lim.vRojo ? "c-rojo" : v >= lim.vNar ? "c-naranja" : v >= lim.vAmar ? "c-amarillo" : "c-verde";
 const colorRafaga = (g) => g == null ? "" : g >= lim.gRojo ? "c-rojo" : g >= lim.gAmar ? "c-amarillo" : "c-verde";
+// Solo minimo: rojo por debajo, amarillo hasta 0,2 m por encima, verde mas arriba. Sin minimo cargado: sin color.
 const colorRio = (m) => {
-  if (m == null || (lim.rioMin == null && lim.rioMax == null)) return "";
-  if ((lim.rioMin != null && m < lim.rioMin) || (lim.rioMax != null && m > lim.rioMax)) return "c-rojo";
+  if (m == null || lim.rioMin == null) return "";
+  if (m < lim.rioMin) return "c-rojo";
+  if (m < lim.rioMin + MARGEN_RIO) return "c-amarillo";
   return "c-verde";
 };
 
