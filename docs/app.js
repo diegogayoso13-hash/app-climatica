@@ -65,15 +65,18 @@ async function api(ruta) {
 
 async function bajarTodo() {
   const ahora = new Date().toISOString();
-  const [estaciones, ultimas, pronostico, alertas, fuentes, config] = await Promise.all([
+  const hace7d = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
+  const [estaciones, ultimas, pronostico, alertas, fuentes, config, novedades, pdfs] = await Promise.all([
     api("estaciones?select=*&order=orden"),
     api("ultimas_lecturas?select=*&order=estacion,tipo,ts.desc"),
     api("pronostico_actual?select=*&order=hora"),
     api(`alertas_smn?select=*&toca_zona=is.true&hasta=gt.${encodeURIComponent(ahora)}&order=desde`),
     api("estado_fuentes?select=*"),
     api("configuracion?select=*"),
+    api(`novedades_canal?select=*&or=(normalizada_en.is.null,normalizada_en.gt.${encodeURIComponent(hace7d)})&order=km.asc.nullsfirst`),
+    api("sohma_pdfs?select=*&order=leido_en.desc&limit=1"),
   ]);
-  return { estaciones, ultimas, pronostico, alertas, fuentes, config };
+  return { estaciones, ultimas, pronostico, alertas, fuentes, config, novedades, pdfs };
 }
 
 // Ultima y anterior de cada estacion por tipo
@@ -92,6 +95,7 @@ function render(d) {
   const ix = indexar(d.ultimas);
   const nombre = Object.fromEntries(d.estaciones.map((e) => [e.id, e.nombre]));
   renderPrincipal(ix);
+  renderCanal(d);
   renderOtras(ix, nombre);
   renderPronostico(d.pronostico, d.config);
   renderAlertas(d.alertas, d.fuentes);
@@ -153,6 +157,101 @@ function renderPrincipal(ix) {
         <div class="hora">${m ? `${hora(m.ts)}<br>${hace(m.ts)}` : "sin dato"}</div>
       </div>
     </div>`;
+}
+
+// ---------- novedades del Canal Martin Garcia (SOHMA) ----------
+const TRAMOS = {
+  "BARRA DEL FARALLON": "Barra del Farallón", "PASO DEL FARALLON": "Paso del Farallón", "BARRA DE SAN PEDRO": "Barra de San Pedro",
+  "PASO DE SAN JUAN": "Paso de San Juan", "POZOS DE SAN JUAN": "Pozos de San Juan", "CANAL NUEVO": "Canal Nuevo",
+  "CANAL DEL INFIERNO": "Canal del Infierno", "CANAL DEL ESTE": "Canal del Este", "CANAL PRINCIPAL": "Canal Principal",
+  "CANAL INTERMEDIO": "Canal Intermedio (otro kilometraje)",
+};
+const tramoLindo = (t) => TRAMOS[t] ?? (t ? t.charAt(0) + t.slice(1).toLowerCase() : "");
+// Color por estado: falta rojo; corrida/averiada/retirada naranja; apagada/luz no confiable/AIS amarillo.
+const colorEstado = (e = "") =>
+  /FALTA|HUNDIDA|DESTRUIDA/.test(e) ? "c-rojo"
+    : /CORRIDA|AVERIADA|RETIRADA|REPOSICIONADA/.test(e) ? "c-naranja"
+    : /APAGADA|NO CONFIABLE|AIS|TOPE/.test(e) ? "c-amarillo" : "c-gris";
+const fmtDiaHora = (ts) => ts ? fmtFechaHora.format(new Date(ts)) : "?";
+// "Visto" = ya aparecio en pantalla y el usuario toco "Ya lo vi". Clave: id + fecha en que aparecio (o se normalizo).
+const claveVista = (n) => `${n.id}|${n.normalizada_en ? "N" + n.normalizada_en : n.primera_vez}`;
+const vistas = () => new Set(leerLocal("canal_vistas") ?? []);
+
+function renderCanal(d) {
+  const cont = document.getElementById("canal");
+  const nov = d.novedades ?? [];
+  const pdf = (d.pdfs ?? [])[0];
+  const sohma = (d.fuentes ?? []).find((f) => f.fuente === "sohma");
+  const ahora = Date.now();
+  const yaVistas = vistas();
+
+  const activas = nov.filter((n) => !n.normalizada_en);
+  const radio = activas.filter((n) => n.tipo === "radioaviso" && (!n.vigente_hasta || new Date(n.vigente_hasta).getTime() > ahora));
+  const balizas = activas.filter((n) => n.tipo === "baliza");
+  const normalizadas = nov.filter((n) => n.normalizada_en);
+  const esNueva = (n) => !yaVistas.has(claveVista(n));
+  const etiqueta = (n) => esNueva(n) ? `<span class="nuevo">NUEVO</span>` : "";
+
+  // Avisos sobre la lectura del PDF
+  const avisos = [];
+  if (!pdf) avisos.push("Todavía no se leyó ningún PDF del SOHMA.");
+  else {
+    if (!pdf.ok) avisos.push(`El PDF del SOHMA (${esc(pdf.archivo)}) no se pudo leer bien: se muestran las últimas novedades que sí se leyeron.`);
+    for (const p of pdf.problemas ?? []) if (/MENCIONAR EL CANAL/.test(p)) avisos.push(esc(p));
+  }
+  if (sohma?.ultimo_error && (!sohma.ultimo_ok || sohma.ultimo_error > sohma.ultimo_ok)) avisos.push(`Error al revisar el SOHMA: ${esc(sohma.mensaje_error)}`);
+  if (sohma?.ultimo_ok && minutosDesde(sohma.ultimo_ok) > 26 * 60) avisos.push(`El robot no pudo revisar el SOHMA desde ${fmtDiaHora(sohma.ultimo_ok)}.`);
+
+  const lista = pdf ? `Balizamiento: aviso del ${esc(pdf.lista_emitido ?? "?")}, vigente hasta ${pdf.lista_vigente_hasta ? fmtDiaHora(pdf.lista_vigente_hasta) : "?"} · PDF ${esc(pdf.archivo)} leído ${fmtDiaHora(pdf.leido_en)}` : "";
+
+  const htmlRadio = radio.length ? radio.map((n) => `
+    <details class="radioaviso">
+      <summary>${etiqueta(n)}AVUR ${esc(n.clave)} · ${esc(n.descripcion)} <span class="nota">· hasta ${fmtDiaHora(n.vigente_hasta)}</span></summary>
+      <p>${esc(n.texto)}</p>
+      <p class="nota">Emitido ${esc(n.emitido ?? "?")}${n.anula ? ` · anula ${esc(n.anula)}` : ""} · visto desde ${fmtDiaHora(n.primera_vez)}</p>
+    </details>`).join("") : `<p class="nota">Sin radioavisos vigentes para el canal.</p>`;
+
+  const fila = (n, norm = false) => `
+    <div class="baliza ${norm ? "normalizada" : ""}">
+      <span class="km">${n.km != null ? `km ${String(n.km).replace(".", ",")}` : "–"}</span>
+      <span>${etiqueta(n)}Nº ${esc(n.clave)} · ${esc((n.descripcion ?? "").replace(/\s*KM\s*[\d.,]+/i, "").toLowerCase())}
+        <small>${esc(tramoLindo(n.tramo))} · ${norm ? `normalizada ${fmtDiaHora(n.normalizada_en)}` : `visto desde ${fmtDiaHora(n.primera_vez)}`}</small></span>
+      <span class="estado ${norm ? "c-verde" : colorEstado(n.estado)}">${norm ? "NORMAL" : esc(n.estado)}</span>
+    </div>`;
+
+  cont.innerHTML = `
+    <h2>Novedades Canal Martín García <small>(SOHMA)</small></h2>
+    ${avisos.map((a) => `<div class="aviso aviso-amarillo" style="margin:6px 0">${a}</div>`).join("")}
+    <p class="nota">${lista}</p>
+    <h3 class="sub">Radioavisos</h3>${htmlRadio}
+    <h3 class="sub">Balizamiento (${balizas.length})</h3>
+    ${balizas.length ? balizas.map((n) => fila(n)).join("") : `<p class="nota">Sin novedades de balizamiento en el canal.</p>`}
+    <h3 class="sub">Normalizadas en los últimos 7 días</h3>
+    ${normalizadas.length ? normalizadas.map((n) => fila(n, true)).join("") : `<p class="nota">Ninguna.</p>`}
+    <p class="nota">"Visto desde": primer día que el robot lo vio en los avisos del SOHMA (el SOHMA no informa desde cuándo está cada novedad).</p>`;
+
+  // Cartel arriba si hay algo nuevo desde la ultima vez
+  const nuevosR = radio.filter(esNueva).length;
+  const nuevosB = balizas.filter(esNueva).length;
+  const nuevosN = normalizadas.filter(esNueva).length;
+  const cartel = document.getElementById("aviso-canal");
+  if (nuevosR + nuevosB + nuevosN) {
+    const partes = [
+      nuevosR && `${nuevosR} radioaviso${nuevosR > 1 ? "s" : ""} nuevo${nuevosR > 1 ? "s" : ""}`,
+      nuevosB && `${nuevosB} baliza${nuevosB > 1 ? "s" : ""} con novedad nueva`,
+      nuevosN && `${nuevosN} normalizada${nuevosN > 1 ? "s" : ""}`,
+    ].filter(Boolean).join(" · ");
+    cartel.innerHTML = `<div class="aviso aviso-azul"><span>🔔 Canal Martín García desde tu última visita: ${partes}</span>
+      <button type="button" id="btn-visto">Ya lo vi</button></div>`;
+    document.getElementById("btn-visto").onclick = () => {
+      const s = vistas();
+      for (const n of [...radio, ...balizas, ...normalizadas]) s.add(claveVista(n));
+      guardarLocal("canal_vistas", [...s].slice(-500));
+      renderCanal(d);
+    };
+  } else {
+    cartel.innerHTML = "";
+  }
 }
 
 function renderOtras(ix, nombre) {
@@ -262,11 +361,11 @@ function renderAlertas(alertas, fuentes) {
     : "";
 }
 
-const NOMBRE_FUENTE = { carp: "CARP (4 estaciones)", armada_colonia: "Armada Colonia", open_meteo: "Open-Meteo", smn_alertas: "Alertas SMN" };
+const NOMBRE_FUENTE = { carp: "CARP (4 estaciones)", armada_colonia: "Armada Colonia", open_meteo: "Open-Meteo", smn_alertas: "Alertas SMN", sohma: "Avisos SOHMA (cada hora)" };
 function renderFuentes(fuentes) {
   const filas = fuentes.map((f) => {
     const falla = f.ultimo_error && (!f.ultimo_ok || f.ultimo_error > f.ultimo_ok);
-    const viejo = esViejo(f.ultimo_ok);
+    const viejo = !f.ultimo_ok || minutosDesde(f.ultimo_ok) > (f.fuente === "sohma" ? 90 : VIEJO_MIN);
     return `<li>${falla || viejo ? "⚠" : "✓"} ${esc(NOMBRE_FUENTE[f.fuente] ?? f.fuente)}: ${f.ultimo_ok ? `leída ${hora(f.ultimo_ok)}` : "nunca"}${falla ? ` — error: ${esc(f.mensaje_error)}` : ""}</li>`;
   }).join("");
   document.getElementById("fuentes").innerHTML = `<h2>Estado del robot</h2><ul class="nota" style="padding-left:18px;margin:0">${filas}</ul>`;

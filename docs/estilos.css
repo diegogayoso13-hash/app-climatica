@@ -103,6 +103,20 @@ h2 small { font-weight: normal; color: var(--suave); }
 .alerta { border: 2px solid var(--borde); border-radius: 10px; padding: 10px; margin-bottom: 8px; }
 .alerta h3 { margin: 0 0 4px; font-size: 1rem; }
 
+/* Novedades del canal */
+.aviso-azul { background: #dceaf7; border: 2px solid var(--azul); color: #0b2a44; display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.aviso-azul button { padding: 6px 10px; }
+.radioaviso { border: 2px solid var(--naranja); border-radius: 10px; padding: 10px; margin-bottom: 8px; }
+.radioaviso summary { cursor: pointer; font-weight: 600; }
+.baliza { display: grid; grid-template-columns: 70px 1fr auto; gap: 8px; align-items: center; padding: 7px 0; border-top: 1px solid var(--borde); font-size: .92rem; }
+.baliza .km { font-weight: 700; }
+.baliza small { display: block; color: var(--suave); font-size: .78rem; }
+.estado { border: 2px solid var(--borde); border-radius: 8px; padding: 2px 6px; font-weight: 700; font-size: .78rem; text-align: center; }
+.c-gris { background: var(--fondo); }
+.nuevo { background: var(--azul); color: #fff; border-radius: 6px; padding: 1px 5px; font-size: .7rem; font-weight: 700; margin-right: 4px; }
+.normalizada { opacity: .7; }
+h3.sub { font-size: .9rem; margin: 12px 0 4px; color: var(--suave); text-transform: uppercase; letter-spacing: .03em; }
+
 footer { max-width: 720px; margin: 0 auto; padding: 4px 16px 24px; font-size: .75rem; color: var(--suave); }
 
 dialog { border: 0; border-radius: 12px; padding: 16px; max-width: 420px; width: calc(100% - 32px); background: var(--tarjeta); color: var(--texto); }
