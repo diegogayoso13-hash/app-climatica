@@ -115,6 +115,9 @@ h2 small { font-weight: normal; color: var(--suave); }
 .c-gris { background: var(--fondo); }
 .nuevo { background: var(--azul); color: #fff; border-radius: 6px; padding: 1px 5px; font-size: .7rem; font-weight: 700; margin-right: 4px; }
 .normalizada { opacity: .7; }
+.nota-mia { grid-column: 1 / -1; margin-top: -2px; padding: 4px 8px; border-left: 3px solid var(--azul); background: var(--fondo); border-radius: 4px; font-size: .85rem; }
+.nota-mia.vacia { background: none; border-left: 0; padding: 0; text-align: right; }
+.btn-nota { font-size: .75rem; padding: 2px 8px; margin-left: 6px; }
 h3.sub { font-size: .9rem; margin: 12px 0 4px; color: var(--suave); text-transform: uppercase; letter-spacing: .03em; }
 
 footer { max-width: 720px; margin: 0 auto; padding: 4px 16px 24px; font-size: .75rem; color: var(--suave); }

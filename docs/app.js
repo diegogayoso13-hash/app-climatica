@@ -176,8 +176,26 @@ const fmtDiaHora = (ts) => ts ? fmtFechaHora.format(new Date(ts)) : "?";
 // "Visto" = ya aparecio en pantalla y el usuario toco "Ya lo vi". Clave: id + fecha en que aparecio (o se normalizo).
 const claveVista = (n) => `${n.id}|${n.normalizada_en ? "N" + n.normalizada_en : n.primera_vez}`;
 const vistas = () => new Set(leerLocal("canal_vistas") ?? []);
+// Notas propias por senal: NO son datos oficiales, quedan solo en este celular. { "4010": { texto, fecha } }
+const notas = () => leerLocal("notas_senal") ?? {};
+let ultimosDatosCanal = null;
+
+document.getElementById("canal").addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-nota]");
+  if (!b) return;
+  const senal = b.dataset.nota;
+  const todas = notas();
+  const texto = prompt(`Tu nota para la señal Nº ${senal} (no oficial, queda en este celular).\nDejala vacía para borrarla.`, todas[senal]?.texto ?? "");
+  if (texto === null) return; // cancelo
+  if (texto.trim()) todas[senal] = { texto: texto.trim(), fecha: new Date().toISOString() };
+  else delete todas[senal];
+  guardarLocal("notas_senal", todas);
+  if (ultimosDatosCanal) renderCanal(ultimosDatosCanal);
+});
 
 function renderCanal(d) {
+  ultimosDatosCanal = d;
+  const misNotas = notas();
   const cont = document.getElementById("canal");
   const nov = d.novedades ?? [];
   const pdf = (d.pdfs ?? [])[0];
@@ -217,6 +235,10 @@ function renderCanal(d) {
       <span>${etiqueta(n)}Nº ${esc(n.clave)} · ${esc((n.descripcion ?? "").replace(/\s*KM\s*[\d.,]+/i, "").toLowerCase())}
         <small>${esc(tramoLindo(n.tramo))} · ${norm ? `normalizada ${fmtDiaHora(n.normalizada_en)}` : `visto desde ${fmtDiaHora(n.primera_vez)}`}</small></span>
       <span class="estado ${norm ? "c-verde" : colorEstado(n.estado)}">${norm ? "NORMAL" : esc(n.estado)}</span>
+      ${misNotas[n.clave]
+        ? `<div class="nota-mia">📝 <strong>Tu nota</strong> (${fmtDiaHora(misNotas[n.clave].fecha)}, no oficial): ${esc(misNotas[n.clave].texto)}
+             <button type="button" class="btn-nota" data-nota="${esc(n.clave)}">editar</button></div>`
+        : `<div class="nota-mia vacia"><button type="button" class="btn-nota" data-nota="${esc(n.clave)}">📝 agregar nota</button></div>`}
     </div>`;
 
   cont.innerHTML = `

@@ -1,6 +1,6 @@
 // Guarda los archivos de la app para que abra sin señal.
 // Los datos NO pasan por aca: la app guarda la ultima lectura en el celular y avisa que es vieja.
-const CACHE = "canal-mg-v4";
+const CACHE = "canal-mg-v5";
 const ARCHIVOS = ["./", "index.html", "estilos.css", "app.js", "manifest.webmanifest", "icono-192.png", "icono-512.png"];
 
 self.addEventListener("install", (e) => {
