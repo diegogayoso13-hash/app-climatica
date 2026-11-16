@@ -26,6 +26,15 @@
 
   <main>
     <section id="principal" class="tarjeta"></section>
+
+    <section class="tarjeta">
+      <h2>Marea últimas 24 h <small>(m sobre LIMB)</small></h2>
+      <div class="botonera" id="marea-botones"></div>
+      <div class="lectura-grafico" id="marea-lectura">Tocá el gráfico para ver cada valor.</div>
+      <div id="marea-grafico" class="grafico"></div>
+      <div class="leyenda" id="marea-leyenda"></div>
+    </section>
+
     <section id="canal" class="tarjeta"></section>
     <section id="otras" class="tarjeta"></section>
 
@@ -34,6 +43,16 @@
       <p class="nota" id="pron-info"></p>
       <div id="pronostico" class="tira"></div>
       <p class="nota">Número grande: promedio de los modelos. Abajo: margen entre el modelo más bajo y el más alto.</p>
+    </section>
+
+    <section class="tarjeta">
+      <h2>Viento en Norden: real contra pronóstico <small>(últimas 24 h)</small></h2>
+      <p class="nota">Pronóstico = el que ya estaba disponible 6 horas antes de cada hora.</p>
+      <div class="lectura-grafico" id="rvp-lectura">Tocá el gráfico para ver cada valor.</div>
+      <div id="rvp-grafico" class="grafico"></div>
+      <div class="leyenda" id="rvp-leyenda"></div>
+      <h3 class="sub">¿Qué modelo acierta más en Norden?</h3>
+      <div id="ranking"></div>
     </section>
 
     <section class="tarjeta">

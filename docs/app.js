@@ -66,7 +66,8 @@ async function api(ruta) {
 async function bajarTodo() {
   const ahora = new Date().toISOString();
   const hace7d = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
-  const [estaciones, ultimas, pronostico, alertas, fuentes, config, novedades, pdfs] = await Promise.all([
+  const hace30d = new Date(Date.now() - 31 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+  const [estaciones, ultimas, pronostico, alertas, fuentes, config, novedades, pdfs, l24, pron6, errores] = await Promise.all([
     api("estaciones?select=*&order=orden"),
     api("ultimas_lecturas?select=*&order=estacion,tipo,ts.desc"),
     api("pronostico_actual?select=*&order=hora"),
@@ -75,8 +76,11 @@ async function bajarTodo() {
     api("configuracion?select=*"),
     api(`novedades_canal?select=*&or=(normalizada_en.is.null,normalizada_en.gt.${encodeURIComponent(hace7d)})&order=km.asc.nullsfirst`),
     api("sohma_pdfs?select=*&order=leido_en.desc&limit=1"),
+    api("lecturas_24h?select=estacion,ts,viento_kn,rafaga_kn,marea_m&order=ts"),
+    api("pronostico_6h_antes?select=*&order=hora"),
+    api(`error_modelos?select=*&anticipacion=eq.0-24&variable=eq.viento&dia=gte.${hace30d}`),
   ]);
-  return { estaciones, ultimas, pronostico, alertas, fuentes, config, novedades, pdfs };
+  return { estaciones, ultimas, pronostico, alertas, fuentes, config, novedades, pdfs, l24, pron6, errores };
 }
 
 // Ultima y anterior de cada estacion por tipo
@@ -94,7 +98,9 @@ function indexar(ultimas) {
 function render(d) {
   const ix = indexar(d.ultimas);
   const nombre = Object.fromEntries(d.estaciones.map((e) => [e.id, e.nombre]));
-  renderPrincipal(ix);
+  renderPrincipal(ix, d.pron6 ?? []);
+  renderMarea(d.l24 ?? []);
+  renderRealVsPron(d.l24 ?? [], d.pron6 ?? [], d.errores ?? []);
   renderCanal(d);
   renderOtras(ix, nombre);
   renderPronostico(d.pronostico, d.config);
@@ -102,7 +108,183 @@ function render(d) {
   renderFuentes(d.fuentes);
 }
 
-function renderPrincipal(ix) {
+// ---------- pronostico "6 h antes" por hora: promedio, minimo y maximo de los modelos ----------
+const promedio = (a) => a.length ? a.reduce((s, x) => s + x, 0) / a.length : null;
+const dirMedia = (ds) => ds.length ? (Math.atan2(promedio(ds.map((x) => Math.sin(x * Math.PI / 180))), promedio(ds.map((x) => Math.cos(x * Math.PI / 180)))) * 180 / Math.PI + 360) % 360 : null;
+function pronPorHora(pron6) {
+  const m = new Map();
+  for (const f of pron6) (m.get(f.hora) ?? m.set(f.hora, []).get(f.hora)).push(f);
+  return [...m.entries()].map(([hora, fs]) => {
+    const vs = fs.map((f) => f.viento_kn).filter((x) => x != null);
+    const gs = fs.map((f) => f.rafaga_kn).filter((x) => x != null);
+    return { t: new Date(hora).getTime(), v: promedio(vs), vMin: Math.min(...vs), vMax: Math.max(...vs), g: promedio(gs),
+      dir: dirMedia(fs.map((f) => f.dir_grados).filter((x) => x != null)), modelos: fs.map((f) => f.modelo) };
+  }).sort((a, b) => a.t - b.t);
+}
+
+// ---------- grafico de lineas en SVG (sin librerias) ----------
+// series: [{ nombre, puntos: [[t, v]], clase: "s1"|"s2", ancho, punteada, cortarMin }]
+// banda: { puntos: [[t, lo, hi]] } ; zonas: [{ y0, y1, clase }]
+const G = { W: 360, H: 190, iz: 34, de: 8, ar: 8, ab: 22 };
+function grafico(cont, lectura, { series, banda, zonas = [], t0, t1, fmtV }) {
+  const todos = series.flatMap((s) => s.puntos.map((p) => p[1])).concat(banda ? banda.puntos.flatMap((p) => [p[1], p[2]]) : []).filter((x) => x != null);
+  if (!todos.length) { cont.innerHTML = `<p class="nota">Sin datos en las últimas 24 h.</p>`; return; }
+  // La escala incluye el limite de las zonas (por ejemplo, tu minimo del rio) para que se vea la linea de corte.
+  const limites = zonas.flatMap((z) => [z.y0, z.y1]).filter((x) => x != null);
+  let y0 = Math.min(...todos, ...limites);
+  let y1 = Math.max(...todos, ...limites);
+  const pad = Math.max((y1 - y0) * 0.1, 0.05); y0 -= pad; y1 += pad;
+  const X = (t) => G.iz + (t - t0) / (t1 - t0) * (G.W - G.iz - G.de);
+  const Y = (v) => G.ar + (1 - (v - y0) / (y1 - y0)) * (G.H - G.ar - G.ab);
+  const camino = (pts, cortar) => {
+    let d = "", ant = null;
+    for (const [t, v] of pts) {
+      if (v == null) { ant = null; continue; }
+      d += `${ant == null || t - ant > cortar ? "M" : "L"}${X(t).toFixed(1)},${Y(v).toFixed(1)}`;
+      ant = t;
+    }
+    return d;
+  };
+  let svg = `<svg viewBox="0 0 ${G.W} ${G.H}" role="img" aria-label="gráfico">`;
+  for (const z of zonas) {
+    const a = Math.max(z.y0 ?? y0, y0), b = Math.min(z.y1 ?? y1, y1);
+    if (b > a) svg += `<rect x="${G.iz}" width="${G.W - G.iz - G.de}" y="${Y(b)}" height="${Y(a) - Y(b)}" style="fill:${z.relleno};stroke:none"/>`;
+  }
+  // grilla y ejes
+  // Marcas redondas en el eje vertical (1, 2, 2,5 o 5 por potencia de 10)
+  const bruto = (y1 - y0) / 4, pot = 10 ** Math.floor(Math.log10(bruto));
+  const pasoY = [1, 2, 2.5, 5, 10].map((k) => k * pot).find((k) => k >= bruto);
+  for (let v = Math.ceil(y0 / pasoY) * pasoY; v <= y1; v += pasoY) {
+    svg += `<line class="eje" x1="${G.iz}" x2="${G.W - G.de}" y1="${Y(v)}" y2="${Y(v)}"/><text x="${G.iz - 4}" y="${Y(v) + 3}" text-anchor="end">${fmtV(Math.round(v / pasoY) * pasoY)}</text>`;
+  }
+  const paso = 3 * 3600e3;
+  for (let t = Math.ceil(t0 / paso) * paso; t <= t1; t += paso) {
+    const h = hora(t).slice(0, 2);
+    svg += `<line class="eje" x1="${X(t)}" x2="${X(t)}" y1="${G.ar}" y2="${G.H - G.ab}" style="opacity:.5"/><text x="${X(t)}" y="${G.H - 6}" text-anchor="middle">${h}h</text>`;
+  }
+  if (banda?.puntos.length) {
+    const pb = banda.puntos.filter((p) => p[1] != null);
+    const arriba = pb.map(([t, , hi]) => `${X(t).toFixed(1)},${Y(hi).toFixed(1)}`);
+    const abajo = pb.slice().reverse().map(([t, lo]) => `${X(t).toFixed(1)},${Y(lo).toFixed(1)}`);
+    svg += `<polygon points="${arriba.concat(abajo).join(" ")}" style="fill:var(--serie2-banda);stroke:none"/>`;
+  }
+  for (const s of series) {
+    svg += `<path d="${camino(s.puntos, s.cortarMin * 60000)}" fill="none" style="stroke:var(--serie${s.clase === "s2" ? 2 : 1});stroke-width:${s.ancho ?? 2};stroke-linecap:round;stroke-linejoin:round${s.punteada ? ";stroke-dasharray:5 4" : ""}"/>`;
+  }
+  svg += `<line class="cruz" id="cruz" x1="0" x2="0" y1="${G.ar}" y2="${G.H - G.ab}" style="display:none"/></svg>`;
+  cont.innerHTML = svg;
+
+  // Lectura al tocar o pasar el dedo: el valor mas cercano de cada serie
+  const el = cont.querySelector("svg");
+  const cruz = el.querySelector("#cruz");
+  const mover = (ev) => {
+    const r = el.getBoundingClientRect();
+    const x = (ev.clientX - r.left) / r.width * G.W;
+    const t = t0 + (x - G.iz) / (G.W - G.iz - G.de) * (t1 - t0);
+    if (t < t0 || t > t1) return;
+    cruz.setAttribute("x1", X(t)); cruz.setAttribute("x2", X(t)); cruz.style.display = "";
+    const partes = series.map((s) => {
+      let mejor = null;
+      for (const p of s.puntos) if (p[1] != null && (!mejor || Math.abs(p[0] - t) < Math.abs(mejor[0] - t))) mejor = p;
+      return mejor && Math.abs(mejor[0] - t) < s.cortarMin * 60000 ? `${s.nombre} ${fmtV(mejor[1])} (${hora(mejor[0])})` : `${s.nombre} sin dato`;
+    });
+    lectura.textContent = partes.join(" · ");
+  };
+  el.addEventListener("pointermove", mover);
+  el.addEventListener("pointerdown", mover);
+}
+
+// Linea en la tarjeta de Norden: que decia el pronostico (hecho 6 h antes) para la hora de la ultima lectura.
+function comparacionAhora(w, pron6) {
+  const ph = pronPorHora(pron6);
+  const ref = w && !esViejo(w.ts) ? new Date(w.ts).getTime() : Date.now();
+  const p = ph.reduce((mej, x) => (!mej || Math.abs(x.t - ref) < Math.abs(mej.t - ref) ? x : mej), null);
+  if (!p || Math.abs(p.t - ref) > 45 * 60000) return `<div class="comparacion nota">Pronóstico hecho 6 h antes: todavía sin datos para esta hora.</div>`;
+  const rango = p.modelos.length > 1 ? ` (${n0(p.vMin)}–${n0(p.vMax)})` : "";
+  let dif = "";
+  if (w && !esViejo(w.ts) && w.viento_kn != null && p.v != null) {
+    const d = w.viento_kn - p.v;
+    dif = Math.abs(d) < 0.5 ? " → <strong>real igual al pronóstico</strong>"
+      : ` → <strong>real ${n1(Math.abs(d))} kn ${d > 0 ? "por encima" : "por debajo"}</strong>`;
+  }
+  return `<div class="comparacion">Pronóstico (hecho 6 h antes) para las ${hora(p.t).slice(0, 2)} h: <strong>${n0(p.v)} kn</strong>${rango} · ráfaga ${n0(p.g)} · ${p.dir == null ? "" : `de ${cardinal(p.dir)}`}${dif}
+    <span class="nota">· ${p.modelos.length} de 3 modelos</span></div>`;
+}
+
+// ---------- marea 24 h ----------
+const ESTACIONES_MAREA = { colonia: "Colonia", conchillas: "Conchillas", carmelo: "Carmelo" };
+let mareaExtra = leerLocal("marea_extra");
+let ultimosL24 = [];
+function renderMarea(l24) {
+  ultimosL24 = l24;
+  const t1 = Date.now(), t0 = t1 - 24 * 3600e3;
+  const serie = (id) => l24.filter((l) => l.estacion === id && l.marea_m != null).map((l) => [new Date(l.ts).getTime(), l.marea_m]);
+  const series = [{ nombre: "Norden", puntos: serie("norden"), clase: "s1", ancho: 2.5, cortarMin: 20 }];
+  if (mareaExtra) series.push({ nombre: ESTACIONES_MAREA[mareaExtra], puntos: serie(mareaExtra), clase: "s2", ancho: 1.5, punteada: true, cortarMin: 20 });
+  const zonas = lim.rioMin == null ? [] : [
+    { y0: null, y1: lim.rioMin, relleno: "var(--rojo-fondo)" },
+    { y0: lim.rioMin, y1: lim.rioMin + MARGEN_RIO, relleno: "var(--amarillo-fondo)" },
+  ];
+  document.getElementById("marea-botones").innerHTML = Object.entries(ESTACIONES_MAREA).map(([id, n]) =>
+    `<button type="button" data-marea="${id}" aria-pressed="${mareaExtra === id}">+ ${n}</button>`).join("");
+  document.getElementById("marea-lectura").textContent = "Tocá el gráfico para ver cada valor.";
+  grafico(document.getElementById("marea-grafico"), document.getElementById("marea-lectura"), { series, zonas, t0, t1, fmtV: (v) => m2(v) });
+  document.getElementById("marea-leyenda").innerHTML =
+    `<span><i style="background:var(--serie1)"></i>Norden</span>` +
+    (mareaExtra ? `<span style="color:var(--serie2)"><i class="punteada"></i><span style="color:var(--suave)">${ESTACIONES_MAREA[mareaExtra]}</span></span>` : "") +
+    (lim.rioMin != null ? `<span>Rojo: debajo de tu mínimo (${m2(lim.rioMin)} m) · amarillo: hasta +0,2 m</span>` : "") +
+    `<span>Línea cortada = sin datos</span>`;
+}
+document.getElementById("marea-botones").addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-marea]");
+  if (!b) return;
+  mareaExtra = mareaExtra === b.dataset.marea ? null : b.dataset.marea;
+  guardarLocal("marea_extra", mareaExtra);
+  renderMarea(ultimosL24);
+});
+
+// ---------- real contra pronostico ----------
+function renderRealVsPron(l24, pron6, errores) {
+  const t1 = Date.now(), t0 = t1 - 24 * 3600e3;
+  const real = l24.filter((l) => l.estacion === "norden" && l.viento_kn != null).map((l) => [new Date(l.ts).getTime(), l.viento_kn]);
+  const ph = pronPorHora(pron6).filter((p) => p.t >= t0 && p.t <= t1);
+  grafico(document.getElementById("rvp-grafico"), document.getElementById("rvp-lectura"), {
+    t0, t1, fmtV: (v) => n1(v),
+    series: [
+      { nombre: "Real", puntos: real, clase: "s1", ancho: 2, cortarMin: 20 },
+      { nombre: "Pronóstico", puntos: ph.map((p) => [p.t, p.v]), clase: "s2", ancho: 2, cortarMin: 65 },
+    ],
+    banda: { puntos: ph.filter((p) => p.modelos.length > 1).map((p) => [p.t, p.vMin, p.vMax]) },
+  });
+  const horasConPron = ph.length;
+  document.getElementById("rvp-leyenda").innerHTML =
+    `<span><i style="background:var(--serie1)"></i>Real (Norden, nudos)</span>` +
+    `<span><i style="background:var(--serie2)"></i>Pronóstico (promedio)</span>` +
+    `<span><i class="banda"></i>Margen entre modelos</span>` +
+    (horasConPron < 20 ? `<span>Por ahora hay pronóstico para ${horasConPron} de las últimas 24 h (se empezó a guardar el 16/11).</span>` : "");
+
+  // Ranking de modelos con el resumen diario (pronosticos de 0 a 24 h de anticipacion)
+  const NOM = { ecmwf: "ECMWF", gfs: "GFS", icon: "ICON", promedio: "Promedio de los 3" };
+  const desde7 = new Date(Date.now() - 7 * 864e5).toISOString().slice(0, 10);
+  const resumen = (filas) => {
+    const n = filas.reduce((s, f) => s + f.horas_comparadas, 0);
+    if (!n) return null;
+    return { n, abs: filas.reduce((s, f) => s + f.error_abs_medio * f.horas_comparadas, 0) / n, ses: filas.reduce((s, f) => s + f.error_medio * f.horas_comparadas, 0) / n };
+  };
+  const dias = new Set(errores.map((e) => e.dia)).size;
+  const filas = Object.keys(NOM).map((m) => ({ m, d7: resumen(errores.filter((e) => e.modelo === m && e.dia >= desde7)), d30: resumen(errores.filter((e) => e.modelo === m)) }));
+  const mejor = filas.filter((f) => f.d30).sort((a, b) => a.d30.abs - b.d30.abs)[0]?.m;
+  const celda = (r) => r ? `${n1(r.abs)} kn <small class="nota">(${r.ses >= 0 ? "+" : ""}${n1(r.ses)})</small>` : "–";
+  document.getElementById("ranking").innerHTML = !errores.length
+    ? `<p class="nota">Todavía no hay días completos para comparar. El primer resumen se arma esta madrugada a las 3:30.</p>`
+    : `${dias < 3 ? `<p class="nota"><strong>Todavía pocos datos (${dias} día${dias > 1 ? "s" : ""}).</strong> No sacar conclusiones hasta tener al menos una semana.</p>` : ""}
+      <table class="ranking"><thead><tr><th>Modelo</th><th>Últimos 7 días</th><th>Últimos 30 días</th></tr></thead><tbody>
+      ${filas.map((f) => `<tr class="${f.m === mejor && dias >= 3 ? "mejor" : ""}"><td>${NOM[f.m]}${f.m === mejor && dias >= 3 ? " ✓" : ""}</td><td>${celda(f.d7)}</td><td>${celda(f.d30)}</td></tr>`).join("")}
+      </tbody></table>
+      <p class="nota">Error promedio del viento medio en Norden, pronósticos de hasta 24 h. Entre paréntesis: + se pasa, − se queda corto.</p>`;
+}
+
+function renderPrincipal(ix, pron6 = []) {
   // Norden SIEMPRE arriba con su propio dato (en gris si es viejo).
   const [w, wAnt] = ix.norden?.viento ?? [];
   const [m, mAnt] = ix.norden?.marea ?? [];
@@ -148,6 +330,7 @@ function renderPrincipal(ix) {
       </div>
     </div>
     ${respaldo}
+    ${comparacionAhora(w, pron6)}
     <div class="datos ${esViejo(m?.ts) ? "viejo" : ""}">
       <div class="dato ancho ${colorRio(m?.marea_m)}">
         <div style="flex:1">

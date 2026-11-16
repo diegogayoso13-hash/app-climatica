@@ -120,6 +120,27 @@ h2 small { font-weight: normal; color: var(--suave); }
 .btn-nota { font-size: .75rem; padding: 2px 8px; margin-left: 6px; }
 h3.sub { font-size: .9rem; margin: 12px 0 4px; color: var(--suave); text-transform: uppercase; letter-spacing: .03em; }
 
+/* Graficos */
+:root { --serie1: #1f6fb2; --serie2: #d9730d; --serie2-banda: rgba(217, 115, 13, .18); --grilla: #d5dde5; }
+@media (prefers-color-scheme: dark) { :root { --serie1: #4a9bdb; --serie2: #cc6f14; --serie2-banda: rgba(204, 111, 20, .25); --grilla: #2a3a4a; } }
+.grafico svg { width: 100%; height: auto; display: block; touch-action: pan-y; }
+.grafico text { fill: var(--suave); font-size: 10px; }
+.grafico .eje { stroke: var(--grilla); stroke-width: 1; }
+.grafico .cruz { stroke: var(--suave); stroke-width: 1; stroke-dasharray: 3 3; }
+.lectura-grafico { font-size: .85rem; min-height: 1.3em; color: var(--texto); margin: 4px 0; font-variant-numeric: tabular-nums; }
+.leyenda { display: flex; flex-wrap: wrap; gap: 12px; font-size: .8rem; color: var(--suave); margin-top: 4px; }
+.leyenda i { display: inline-block; width: 18px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 5px; }
+.leyenda i.banda { height: 10px; background: var(--serie2-banda); }
+.leyenda i.punteada { background: repeating-linear-gradient(90deg, currentColor 0 4px, transparent 4px 7px); height: 2px; }
+.botonera { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 4px; }
+.botonera button { font-size: .8rem; padding: 4px 10px; }
+.botonera button[aria-pressed="true"] { background: var(--azul); color: #fff; border-color: var(--azul); }
+.comparacion { margin-top: 8px; padding: 8px 10px; border-radius: 10px; background: var(--fondo); font-size: .9rem; }
+table.ranking { width: 100%; border-collapse: collapse; font-size: .88rem; font-variant-numeric: tabular-nums; }
+table.ranking th, table.ranking td { padding: 5px 6px; border-bottom: 1px solid var(--borde); text-align: right; }
+table.ranking th:first-child, table.ranking td:first-child { text-align: left; }
+table.ranking tr.mejor td { font-weight: 700; }
+
 footer { max-width: 720px; margin: 0 auto; padding: 4px 16px 24px; font-size: .75rem; color: var(--suave); }
 
 dialog { border: 0; border-radius: 12px; padding: 16px; max-width: 420px; width: calc(100% - 32px); background: var(--tarjeta); color: var(--texto); }
