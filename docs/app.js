@@ -200,14 +200,16 @@ function comparacionAhora(w, pron6) {
   const ref = w && !esViejo(w.ts) ? new Date(w.ts).getTime() : Date.now();
   const p = ph.reduce((mej, x) => (!mej || Math.abs(x.t - ref) < Math.abs(mej.t - ref) ? x : mej), null);
   if (!p || Math.abs(p.t - ref) > 45 * 60000) return `<div class="comparacion nota">Pronóstico hecho 6 h antes: todavía sin datos para esta hora.</div>`;
-  const rango = p.modelos.length > 1 ? ` (${n0(p.vMin)}–${n0(p.vMax)})` : "";
-  let dif = "";
+  // Los dos numeros bien separados: primero el pronostico, despues el real.
+  let real;
   if (w && !esViejo(w.ts) && w.viento_kn != null && p.v != null) {
-    const d = w.viento_kn - p.v;
-    dif = Math.abs(d) < 0.5 ? " → <strong>real igual al pronóstico</strong>"
-      : ` → <strong>real ${n1(Math.abs(d))} kn ${d > 0 ? "por encima" : "por debajo"}</strong>`;
+    const d = Math.round((w.viento_kn - p.v) * 10) / 10;
+    const dif = Math.abs(d) < 0.5 ? "igual a lo pronosticado" : `${n1(Math.abs(d))} ${d > 0 ? "más" : "menos"} que lo pronosticado`;
+    real = `<strong>Real: ${n1(w.viento_kn)} kn</strong> (${dif})`;
+  } else {
+    real = `<strong>Real:</strong> sin dato nuevo de Norden`;
   }
-  return `<div class="comparacion">Pronóstico (hecho 6 h antes) para las ${hora(p.t).slice(0, 2)} h: <strong>${n0(p.v)} kn</strong>${rango} · ráfaga ${n0(p.g)} · ${p.dir == null ? "" : `de ${cardinal(p.dir)}`}${dif}
+  return `<div class="comparacion">Pronóstico (hecho 6 h antes) para las ${hora(p.t).slice(0, 2)} h: ${n0(p.v)} kn · ráfaga ${n0(p.g)}${p.dir == null ? "" : ` · de ${cardinal(p.dir)}`}. ${real}
     <span class="nota">· ${p.modelos.length} de 3 modelos</span></div>`;
 }
 
