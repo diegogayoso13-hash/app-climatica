@@ -1,76 +1,31 @@
 <!doctype html>
-<html lang="es">
+<html lang="es" class="app">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Canal Martín García</title>
+  <title>Tu Faro</title>
   <meta name="description" content="Viento, marea y alertas del Canal Martín García">
-  <meta name="theme-color" content="#0b3d63">
+  <meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0B1622" media="(prefers-color-scheme: dark)">
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="icon" href="icono-192.png">
+  <link rel="icon" href="icono.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icono-192.png">
   <link rel="stylesheet" href="estilos.css">
+  <script>
+    // Modo noche antes de dibujar, para que no destelle la pantalla clara de noche.
+    try { if (JSON.parse(localStorage.getItem("modo_noche"))) document.documentElement.dataset.tema = "noche"; } catch (e) {}
+  </script>
 </head>
 <body>
-  <header class="barra">
-    <h1>Canal Martín García</h1>
-    <div class="barra-der">
-      <span id="actualizado">Cargando…</span>
-      <button id="btn-ajustes" class="icono-btn" aria-label="Ajustes">⚙</button>
-    </div>
-  </header>
-
-  <div id="aviso-sin-senal" class="aviso aviso-rojo" hidden></div>
-  <div id="alertas-arriba"></div>
-  <div id="aviso-canal"></div>
-
-  <main>
-    <section id="principal" class="tarjeta"></section>
-
-    <section class="tarjeta">
-      <h2>Marea últimas 24 h <small>(m sobre LIMB)</small></h2>
-      <div class="botonera" id="marea-botones"></div>
-      <div class="lectura-grafico" id="marea-lectura">Tocá el gráfico para ver cada valor.</div>
-      <div id="marea-grafico" class="grafico"></div>
-      <div class="leyenda" id="marea-leyenda"></div>
-    </section>
-
-    <section id="canal" class="tarjeta"></section>
-    <section id="otras" class="tarjeta"></section>
-
-    <section class="tarjeta">
-      <h2>Pronóstico 4 días <small id="pron-punto"></small></h2>
-      <p class="nota" id="pron-info"></p>
-      <div id="pronostico" class="tira"></div>
-      <p class="nota">Número grande: promedio de los modelos. Abajo: margen entre el modelo más bajo y el más alto.</p>
-    </section>
-
-    <section class="tarjeta">
-      <h2>Viento en Norden: real contra pronóstico <small>(últimas 24 h)</small></h2>
-      <p class="nota">Pronóstico = el que ya estaba disponible 6 horas antes de cada hora.</p>
-      <div class="lectura-grafico" id="rvp-lectura">Tocá el gráfico para ver cada valor.</div>
-      <div id="rvp-grafico" class="grafico"></div>
-      <div class="leyenda" id="rvp-leyenda"></div>
-      <h3 class="sub">¿Qué modelo acierta más en Norden?</h3>
-      <div id="ranking"></div>
-    </section>
-
-    <section class="tarjeta">
-      <h2>Alertas SMN <small>(Norden e Isla Martín García)</small></h2>
-      <div id="alertas"></div>
-    </section>
-
-    <section class="tarjeta" id="fuentes"></section>
-  </main>
-
-  <footer>
-    <p>Esta app es una ayuda. No reemplaza la consulta de las fuentes oficiales para tomar decisiones de seguridad.</p>
-    <p>Fuentes: CARP, Armada Nacional (SOHMA), Open-Meteo, SMN. Hora de Uruguay (UTC-3). Viento en nudos, marea en metros (LIMB).</p>
-  </footer>
+  <div id="raiz"><p style="padding:16px">Cargando…</p></div>
 
   <dialog id="ajustes">
     <form method="dialog" id="form-ajustes">
-      <h2>Límites de colores</h2>
+      <h2>Ajustes</h2>
+      <fieldset>
+        <legend>Pantalla</legend>
+        <label>Modo noche (todo en rojo) <input type="checkbox" name="noche"></label>
+      </fieldset>
       <fieldset>
         <legend>Viento medio (nudos)</legend>
         <label>Amarillo desde <input type="number" step="0.1" name="vAmar"></label>

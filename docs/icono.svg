@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#0B1622"/>
+  <g fill="none" stroke="#4FB3E8" stroke-width="20" stroke-linecap="round" stroke-linejoin="round">
+    <!-- haces de luz -->
+    <path d="M196 168 L120 140 M196 196 L120 224" opacity=".85"/>
+    <path d="M316 168 L392 140 M316 196 L392 224" opacity=".85"/>
+    <!-- techo y linterna -->
+    <path d="M216 146 L256 112 L296 146 Z"/>
+    <rect x="222" y="146" width="68" height="70" rx="6"/>
+    <!-- balcon -->
+    <path d="M200 216 H312"/>
+    <!-- torre -->
+    <path d="M228 216 L210 392 H302 L284 216"/>
+    <!-- franjas -->
+    <path d="M222 276 H290 M216 336 H296"/>
+  </g>
+  <!-- luz -->
+  <circle cx="256" cy="181" r="14" fill="#F2C94C"/>
+  <!-- agua -->
+  <path d="M156 412 q 20 -14 40 0 t 40 0 t 40 0 t 40 0 t 40 0" fill="none" stroke="#4FB3E8" stroke-width="16" stroke-linecap="round"/>
+</svg>
