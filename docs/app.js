@@ -190,16 +190,18 @@ function pronostico(filas, config) {
   const punto = config?.find((c) => c.clave === "punto_pronostico")?.valor;
   const ph = porHora(filas).filter((p) => p.t >= Date.now() - 3600e3);
   if (!ph.length) return `<section class="tarjeta"><h2 class="titulo">Pronóstico</h2><p class="nota">Sin pronóstico disponible.</p></section>`;
-  const prox = ph.slice(0, 12);
+  const prox = ph.slice(0, 24);
   const dias = new Map();
-  for (const p of ph) { const k = fDiaClave.format(new Date(p.t)); (dias.get(k) ?? dias.set(k, []).get(k)).push(p); }
+  const hoy = fDiaClave.format(new Date());
+  for (const p of ph) { const k = fDiaClave.format(new Date(p.t)); if (k !== hoy) (dias.get(k) ?? dias.set(k, []).get(k)).push(p); }
+  // Renglones por dia desde manana (hoy ya esta en la tira de 24 h), cerrados de entrada.
   const filasDia = [...dias.entries()].slice(0, 4).map(([k, hs], i) => {
     const vMax = Math.max(...hs.map((p) => p.v ?? 0)), gMax = Math.max(...hs.map((p) => p.g ?? 0));
     const conDir = hs.filter((p) => p.dir != null);
     const dir = dirMedia(conDir.map((p) => p.dir), conDir.map((p) => p.v ?? 1)); // predominante, pesada por el viento
     const tor = hs.some((p) => p.tormenta);
     return `<details class="dia" data-clave="dia-${k}"><summary>
-      <span class="nom">${i === 0 ? "Hoy" : esc(fD.format(new Date(hs[0].t)))}${hs.length < 20 ? `<small>${i === 0 ? "desde" : "hasta"} ${hora(i === 0 ? hs[0].t : hs.at(-1).t).slice(0, 2)} h</small>` : ""}</span>
+      <span class="nom">${i === 0 ? "Mañana" : esc(fD.format(new Date(hs[0].t)))}${hs.length < 20 ? `<small>hasta ${hora(hs.at(-1).t).slice(0, 2)} h</small>` : ""}</span>
       ${bf(vMax)}<span class="raf">r ${n0(gMax)}</span>
       <span class="dd">${flecha(dir)}${dir == null ? "" : cardinal(dir)}</span>
       <span>${tor ? `<span style="color:var(--l-amarillo)" title="tormenta">${ic("tormenta")}</span>` : ""}</span>
@@ -210,7 +212,7 @@ function pronostico(filas, config) {
   const corridas = modelos.map((mo) => { const c = filas.find((f) => f.modelo === mo)?.corrida; return `${mo.toUpperCase()} ${c ? fechaHora(c) : "?"}`; });
   let diaAnt = fDiaClave.format(new Date(prox[0].t));
   return `<section class="tarjeta">
-    <h2 class="titulo">Pronóstico <span>próximas 12 h · ${esc(punto?.nombre ?? "Norden")}</span></h2>
+    <h2 class="titulo">Pronóstico <span>próximas 24 h · ${esc(punto?.nombre ?? "Norden")}</span></h2>
     <div class="tira">${cabecera}${prox.map((p) => { const k = fDiaClave.format(new Date(p.t)); const n = k !== diaAnt; diaAnt = k; return columna(p, n); }).join("")}</div>
     <div class="dias">${filasDia}</div>
     <p class="nota">Promedio de los modelos (${corridas.join(" · ")}). En cada día: viento y ráfaga máximos en nudos y dirección predominante. Tocá un día para verlo hora por hora.</p>
