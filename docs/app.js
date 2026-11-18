@@ -222,7 +222,7 @@ function norden(ix, pron6) {
 // Marea del tramo = la MAS BAJA de sus dos estaciones con dato nuevo: si erramos, que muestre menos agua.
 const MARGEN_MIN = 0.60;  // REMAGA 2019, art. 2.9: no se puede bajar
 const PIE = 0.3048;
-const AGUA_DEFECTO = { calado: null, unidad: "m", margen: MARGEN_MIN, colchon: 0.30 };
+const AGUA_DEFECTO = { calado: null, unidad: "m", margen: MARGEN_MIN, colchon: 0.30, eslora: null, manga: null };
 let aguaAj = { ...AGUA_DEFECTO, ...(leerLocal("agua_canal") ?? {}) };
 const caladoM = (aj) => aj.calado == null ? null : aj.unidad === "ft" ? aj.calado * PIE : aj.calado;
 const cm = (x) => Math.round(x * 100) / 100; // se compara al centimetro, sin errores de coma flotante
@@ -230,13 +230,15 @@ const NOM_CORTO = { norden: "Norden", colonia: "Colonia", conchillas: "Conchilla
 const kmTxt = (x) => Number(x).toLocaleString("es-UY", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 
 // Revisa lo que se carga en el engranaje. Devuelve { error } o { valores }.
-function revisarAgua({ calado, unidad, margen, colchon }) {
+function revisarAgua({ calado, unidad, margen, colchon, eslora, manga }) {
   const num = (x) => x === "" || x == null ? null : Number(String(x).replace(",", "."));
-  const c = num(calado), m = num(margen), k = num(colchon);
+  const c = num(calado), m = num(margen), k = num(colchon), e = num(eslora), g = num(manga);
   if (c != null && !(c > 0 && c < (unidad === "ft" ? 66 : 20))) return { error: "El calado no parece válido." };
   if (m != null && !(m >= MARGEN_MIN)) return { error: `El margen bajo la quilla no puede ser menor que ${m2(MARGEN_MIN)} m (REMAGA 2019, art. 2.9).` };
   if (k != null && !(k >= 0)) return { error: "El colchón amarillo no puede ser negativo." };
-  return { valores: { calado: c, unidad: unidad === "ft" ? "ft" : "m", margen: m ?? AGUA_DEFECTO.margen, colchon: k ?? AGUA_DEFECTO.colchon } };
+  if (e != null && !(e >= 10 && e <= 400)) return { error: "La eslora no parece válida (en metros)." };
+  if (g != null && !(g >= 2 && g <= 70)) return { error: "La manga no parece válida (en metros)." };
+  return { valores: { calado: c, unidad: unidad === "ft" ? "ft" : "m", margen: m ?? AGUA_DEFECTO.margen, colchon: k ?? AGUA_DEFECTO.colchon, eslora: e, manga: g } };
 }
 
 const estadoQuilla = (q, margen, colchon) => q < cm(margen) ? "rojo" : q < cm(margen + colchon) ? "amarillo" : "verde";
@@ -320,6 +322,7 @@ const INFO = {
   vis: ["Visibilidad", () => `Visibilidad pronosticada por Open-Meteo (ECMWF 9 km y GFS; por hora se usa el valor más bajo). No hay medición real en el canal. Rojo: menos de ${VIS_ROJO.toLocaleString("es-UY")} m (REMAGA 2019, art. 2.7.3); amarillo: menos de ${VIS_AMARILLO / 1000} km (Tabla II). La hora de la corrida va en gris si tiene más de 12 h (Open-Meteo no respondió).`],
   pronostico: ["Pronóstico", () => "Promedio de los modelos ECMWF, GFS e ICON en el Pilote Norden. En cada día: viento y ráfaga máximos en nudos, dirección predominante y visibilidad mínima. Tocá un día para verlo hora por hora."],
   sohma: ["Novedades del canal", () => `Balizamiento y radioavisos del aviso diario del SOHMA (Armada), solo del Canal Martín García (km 39 a 145,5). "Visto desde": primer día que el robot lo vio en los avisos del SOHMA (el SOHMA no informa desde cuándo está cada novedad). Las notas son tuyas, no oficiales, y quedan solo en este celular.`],
+  remaga: ["REMAGA 2019", () => "Reglamento de Uso y Navegación del Canal Martín García, versión 2019 (CARP), publicado en el Boletín Oficial argentino el 22/03/2019. Es información fija copiada del reglamento: ante cualquier duda vale el texto oficial y lo que disponga la Autoridad Marítima. La dirección del viento de la Tabla II no se evalúa porque el texto no aclara cómo se aplica."],
   fuentes: ["Fuentes", () => "CARP (Norden, Colonia, Conchillas, Carmelo y tabla de tramos), Armada Nacional (SOHMA y estación Colonia), Open-Meteo (ECMWF, GFS, ICON), SMN (alertas). Esta app es una ayuda: no reemplaza la consulta de las fuentes oficiales para tomar decisiones de seguridad."],
 };
 const info = (k) => `<button type="button" class="info-b" data-info="${k}" aria-label="Más información" aria-expanded="false">i</button><span class="info-t" hidden>${esc(INFO[k][1]())}</span>`;
@@ -411,6 +414,173 @@ function canalAgua(d, ix, aj, cd) {
 }
 // Para las pruebas: el resumen y la lista juntos.
 function aguaSec(d, ix, aj) { const r = canalAgua(d, ix, aj, null); return r.resumen + r.tramos; }
+
+// ---------- REMAGA 2019: informacion fija (verificada contra el texto del Boletin Oficial, 22/03/2019) ----------
+const ZONAS_CRUCE = [
+  { id: "g1", titulo: "Esloras de hasta 120 m", art: "2.11.1", hasta: 120, tolerancia: true,
+    km: [[47.8, 52.0], [55.5, 62.3], [80.1, 83.8], [86.2, 93.0], [104.2, 106.8], [107.6, 110.5], [116.6, 145.5]] },
+  { id: "g2", titulo: "Más de 120 m y hasta 200 m", art: "2.11.2", hasta: 200, tolerancia: true,
+    km: [[57.5, 61.5], [86.2, 93.0], [107.6, 110.5], [118.2, 145.5]] },
+  { id: "g3", titulo: "Más de 200 m y hasta 245 m", art: "2.11.3", hasta: 245, tolerancia: false,
+    km: [[57.5, 60.5], [88.1, 91.1], [107.6, 110.5], [118.2, 145.5]] },
+  { id: "g4", titulo: "Mayores que el buque de diseño (más de 245 m de eslora o 32,60 m de manga)", art: "2.11.4",
+    km: [[57.5, 60.5], [88.1, 91.1], [118.2, 145.5]] },
+];
+const DISENO = { eslora: 245, manga: 32.60 }; // art. 1.3
+const TOLERANCIA_CRUCE = 0.10;               // art. 2.11: 10 % en 2.11.1 y 2.11.2
+// Grupo de zonas de cruce segun eslora y manga. null = falta la eslora.
+function grupoCruce(eslora, manga) {
+  if ((manga ?? 0) > DISENO.manga || (eslora ?? 0) > DISENO.eslora) return { g: ZONAS_CRUCE[3], tol: false };
+  if (eslora == null) return null;
+  for (const g of ZONAS_CRUCE.slice(0, 3)) {
+    if (eslora <= g.hasta) return { g, tol: false };
+    if (g.tolerancia && eslora <= g.hasta * (1 + TOLERANCIA_CRUCE)) return { g, tol: true };
+  }
+  return { g: ZONAS_CRUCE[3], tol: false };
+}
+
+// Tabla I (art. 2.10): calado admisible. Si eslora y manga caen en filas distintas, manda la mas restrictiva.
+const TABLA_I = [
+  { calado: 9.45, eslora: [245, 255], manga: [0, 32.60] },
+  { calado: 9.14, eslora: [245, 255], manga: [32.60, 35.00] },
+  { calado: 8.84, eslora: [255, 266], manga: [35.00, 41.00] },
+  { calado: 8.53, eslora: [266, 277], manga: [41.00, 44.00] },
+];
+const esGrande = (eslora, manga) => (eslora ?? 0) > DISENO.eslora || (manga ?? 0) > DISENO.manga;
+function caladoAdmisible(eslora, manga) {
+  if (!esGrande(eslora, manga)) return null;
+  if ((eslora ?? 0) > 277 || (manga ?? 0) > 44) return { fuera: true };
+  const porEslora = eslora == null || eslora <= DISENO.eslora ? null : TABLA_I.find((f) => eslora > f.eslora[0] && eslora <= f.eslora[1]).calado;
+  const porManga = manga == null ? null : TABLA_I.find((f) => manga <= f.manga[1] && (manga > f.manga[0] || f.manga[0] === 0)).calado;
+  const vals = [porEslora, porManga].filter((x) => x != null);
+  return { calado: Math.min(...vals), porEslora, porManga, falta: eslora == null ? "eslora" : manga == null ? "manga" : null };
+}
+const MAREA_MIN_GRANDE = 0.60, MAREA_MIN_REDUCIDA = 0.30; // art. 2.10 y nota de la Tabla I
+const VIS_MIN_GRANDE = 8000;                              // Tabla II: visibilidad no inferior a 8 km
+const VIENTO_MAX_GRANDE_KN = 25 / 1.852;                  // Tabla II: maximo 25 km/h (13,5 kn)
+
+// Tabla II "ahora": visibilidad pronosticada de esta hora (la mas baja de los modelos) y viento real de Norden.
+function tablaII(d, ix, ahora = Date.now()) {
+  const vm = visMapa(d.vis), h = Math.floor(ahora / 3600e3) * 3600e3;
+  const vis = vm.get(h) ?? null;
+  const [w] = ix.norden?.viento ?? [];
+  const viento = w && !esViejo(w.ts) ? w.viento_kn : null;
+  const fallas = [], faltan = [];
+  if (vis == null) faltan.push("visibilidad"); else if (vis < VIS_MIN_GRANDE) fallas.push("visibilidad");
+  if (viento == null) faltan.push("viento"); else if (viento > VIENTO_MAX_GRANDE_KN) fallas.push("viento");
+  return { vis, viento, vientoTs: w?.ts, fallas, faltan, cumple: !fallas.length && !faltan.length };
+}
+// Marea mas baja ahora entre las estaciones con dato nuevo.
+function mareaMasBaja(ix) {
+  let m = null;
+  for (const id of ["norden", "colonia", "conchillas", "carmelo"]) {
+    const l = (ix[id]?.marea ?? [])[0];
+    if (l && l.marea_m != null && !esViejo(l.ts) && (!m || l.marea_m < m.v)) m = { id, v: l.marea_m, ts: l.ts };
+  }
+  return m;
+}
+
+// Fondeaderos (art. 2.13)
+const FONDEO_NORMAL = [
+  { tramo: "Canal Principal", km: [124.5, 130.2] }, { tramo: "Canal Principal", km: [137.3, 141.4] },
+];
+// Radio (capitulo III). Horas de Uruguay (= huso +3 del REMAGA).
+const BOLETINES = [
+  { est: "L2G", horas: ["00:05", "04:05", "08:05", "12:05", "16:05", "20:05"], que: "disposiciones de la PNA, radioavisos y boletín meteorológico" },
+  { est: "CWC22", horas: ["00:03", "12:03", "18:33"], que: "boletín meteorológico y avisos náuticos locales" },
+];
+const minutosUY = (ms) => (((ms / 60000 - 180) % 1440) + 1440) % 1440; // Uruguay = UTC-3, sin horario de verano
+// Proximo horario de una lista ("HH:MM") despues de "ahora": { hora, enMin, manana }
+function proximaHora(horas, ahora = Date.now()) {
+  const m = minutosUY(ahora);
+  const mins = horas.map((h) => { const [a, b] = h.split(":").map(Number); return a * 60 + b; }).sort((x, y) => x - y);
+  const sig = mins.find((x) => x > m);
+  const objetivo = sig ?? mins[0] + 1440;
+  const hh = (objetivo % 1440);
+  return { hora: `${String(Math.floor(hh / 60)).padStart(2, "0")}:${String(hh % 60).padStart(2, "0")}`, enMin: Math.round(objetivo - m), manana: sig == null };
+}
+const proximaAltura = (ahora = Date.now()) => proximaHora(Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2, "0")}:05`), ahora);
+const enCuanto = (min) => min < 60 ? `en ${min} min` : `en ${Math.floor(min / 60)} h ${min % 60} min`;
+function proximoBoletin(ahora = Date.now()) {
+  return BOLETINES.map((b) => ({ ...b, ...proximaHora(b.horas, ahora) })).sort((a, b) => a.enMin - b.enMin);
+}
+
+const kmR = ([a, b]) => `km ${kmTxt(a)} – ${kmTxt(b)}`;
+const tilde = (ok) => ok ? `<span class="ok-r">✓</span>` : `<span class="mal-r">✗</span>`;
+function remagaSecs(d, ix, aj) {
+  const eslora = aj.eslora ?? null, manga = aj.manga ?? null, calado = caladoM(aj);
+  const out = [];
+
+  // 1. Buque grande (solo si corresponde)
+  if (esGrande(eslora, manga)) {
+    const adm = caladoAdmisible(eslora, manga), t2 = tablaII(d, ix), mb = mareaMasBaja(ix);
+    let cuerpo, okCalado = true, mMin = MAREA_MIN_GRANDE;
+    if (adm.fuera) {
+      okCalado = false;
+      cuerpo = `<p><strong>Fuera de la Tabla I</strong> (más de 277 m de eslora o 44 m de manga): hay que presentar con antelación la documentación y los estudios técnicos a las Autoridades Marítimas y obtener la autorización del Administrador del Canal.</p>`;
+    } else {
+      okCalado = calado == null || calado <= adm.calado;
+      if (calado != null && calado < adm.calado) mMin = MAREA_MIN_REDUCIDA;
+      cuerpo = `<p>Calado máximo (Tabla I): <strong>${m2(adm.calado)} m</strong>${adm.porEslora != null && adm.porManga != null && adm.porEslora !== adm.porManga ? ` <small>(por eslora ${m2(adm.porEslora)} · por manga ${m2(adm.porManga)}: manda el más restrictivo)</small>` : ""}${adm.falta ? ` <small>· cargá la ${adm.falta} para el cálculo completo</small>` : ""}</p>
+        ${calado == null ? `<p class="nota">Cargá tu calado para compararlo.</p>` : okCalado ? `<p>${tilde(true)} Tu calado ${m2(calado)} m está dentro del admitido.</p>` : `<p class="aviso-r">${ic("alerta")}<span>Tu calado ${m2(calado)} m <strong>supera el admitido</strong> (${m2(adm.calado)} m).</span></p>`}`;
+    }
+    const okMarea = mb != null && mb.v >= mMin;
+    cuerpo += `<p>Marea mínima: <strong>${m2(mMin)} m</strong> sobre el cero LIMB${mMin === MAREA_MIN_REDUCIDA ? " (reducida: calás menos de lo admitido)" : ""}<br>
+      ${mb ? `${tilde(okMarea)} Ahora la más baja: ${NOM_CORTO[mb.id]} ${m2(mb.v)} m (${hora(mb.ts)})` : "Sin marea reciente: no se puede comparar."}</p>
+      <p>Ahora (Tabla II): ${t2.cumple ? `${tilde(true)} <strong>se cumple</strong>` : t2.fallas.length ? `${tilde(false)} <strong>no se cumple</strong> (${t2.fallas.join(" y ")})` : `<strong>no se puede evaluar</strong> (falta ${t2.faltan.join(" y ")})`}<br>
+      · Visibilidad pronosticada: ${t2.vis == null ? "sin dato" : `${fmtVis(t2.vis)}${t2.vis >= 1000 ? " km" : ""} ${tilde(t2.vis >= VIS_MIN_GRANDE)}`} <small>(hace falta 8 km o más)</small><br>
+      · Viento real en Norden: ${t2.viento == null ? "sin dato nuevo" : `${n1(t2.viento)} kn ${tilde(t2.viento <= VIENTO_MAX_GRANDE_KN)}`} <small>(máximo 25 km/h = 13,5 kn)</small><br>
+      · Dirección: no se evalúa</p>
+      <p class="nota">REMAGA 2019, art. 2.10 y Tablas I y II ${info("remaga")}</p>`;
+    const okAhora = okCalado && okMarea && t2.cumple;
+    out.push(plegable("sec-grande", "Buque grande", `${adm.fuera ? "fuera de la Tabla I" : `calado máx. ${m2(adm.calado)} m`} · ${okAhora ? "✓ ahora se cumple" : "✗ ahora no"}`, cuerpo));
+  }
+
+  // 2. Zonas de cruce
+  const gc = grupoCruce(eslora, manga);
+  const tabla = (g) => `<ul class="km-lista">${g.km.map((r) => `<li>${kmR(r)}</li>`).join("")}</ul>`;
+  const completa = ZONAS_CRUCE.map((g) => `<h3 class="sub">${esc(g.titulo)} <small>(art. ${g.art})</small></h3>${tabla(g)}`).join("");
+  const quien = `<h3 class="sub">Quién se corre (art. 2.12)</h3><ul class="reglas">
+    <li><strong>Km 39 a 93:</strong> se aguanta o maniobra el buque que entró por el km 39 (el que sube). Salvo que haya entrado con el río creciendo: ahí se aguanta el que baja, excepto que vaya cargado y regular la marcha le comprometa el margen bajo la quilla (art. 2.9) o la marea mínima (art. 2.10). Se coordina puente a puente y se informa a las estaciones costeras.</li>
+    <li><strong>Km 93 a 118,2:</strong> maniobra o regula su marcha el que navega aguas arriba (en sentido creciente del kilometraje).</li>
+    <li>Prohibido el cruce en todas las curvas y fuera de las zonas habilitadas (art. 2.7.5).</li>
+    <li>Franqueo de buques de cualquier dimensión: previa comunicación puente a puente, a criterio de los capitanes, con uno navegando por fuera del canal si la profundidad lo permite; se informa a las estaciones costeras (art. 2.11.5).</li></ul>`;
+  const fijo = `<p class="nota">Zonas señalizadas: km 57,5 – 60,5 (solera 188 m) y km 88,1 – 91,1 (solera 178 m). Junto a esta última, sobre el veril rojo, hay una zona lateral de 7,15 m. Si los dos buques son distintos, se usa la zona del más comprometido.</p>`;
+  const cuerpoCruce = gc
+    ? `<p>Tu buque${eslora != null ? ` (${n0(eslora)} m${manga != null ? ` × ${n1(manga)} m` : ""})` : ""}: <strong>${esc(gc.g.titulo)}</strong> <small>(art. ${gc.g.art}${gc.tol ? ", con la tolerancia del 10 %" : ""})</small></p>${tabla(gc.g)}${fijo}
+       <details class="ver-tabla" data-clave="cruce-completa"><summary>Ver la tabla completa</summary>${completa}</details>${quien}`
+    : `<p class="nota">Cargá la eslora en Más → Ajustes para ver solo tus zonas.</p>${completa}${fijo}${quien}`;
+  out.push(plegable("sec-cruce", "Zonas de cruce", gc ? `${eslora != null ? `${n0(eslora)} m` : "tu buque"}: ${gc.g.km.length} zonas` : "sin eslora: tabla completa",
+    cuerpoCruce + `<p class="nota">REMAGA 2019, art. 2.11 y 2.12 ${info("remaga")}</p>`));
+
+  // 3. Radio
+  const pb = proximoBoletin(), pa = proximaAltura();
+  const cuerpoRadio = `<p>Escucha permanente: <strong>canal 16</strong> + canal de trabajo <strong>81</strong> (art. 3.7).</p>
+    <h3 class="sub">Próximos boletines (canal 15, previo aviso por canal 16)</h3><ul class="reglas">
+    ${pb.map((b) => `<li><strong>${b.est} ${b.hora}</strong>${b.manana ? " (mañana)" : ""} — ${b.que} <small>(${enCuanto(b.enMin)})</small><br><small>todos: ${b.horas.join(" · ")}</small></li>`).join("")}
+    <li><strong>L2G cada hora a los :05</strong> — altura de agua y tendencia <small>(próximo ${pa.hora}, ${enCuanto(pa.enMin)})</small></li></ul>
+    <h3 class="sub">Estaciones</h3><ul class="reglas">
+    <li><strong>Km 39 a 93 · Zona S-1:</strong> Buenos Aires Prefectura Naval Radio · <strong>L2G</strong> · canales 14, 16 y 81</li>
+    <li><strong>Km 93 a 145,5 · Zona N-2:</strong> Control Carmelo Prefectura Radio · <strong>CWC22</strong> · canales 11, 16 y 81</li></ul>
+    <h3 class="sub">Puntos de información (ETA y hora de paso, canal 81)</h3>
+    <p>km 39 · 60,1 · 80,1 · 89,6 · 93 · 118,2 · 134,2 (Paraná Guazú) · 143,2 (Sauce) · 145,5</p>
+    <p class="nota">REMAGA 2019, capítulo III (art. 3.5, 3.7, 3.9 y 3.13) ${info("remaga")}</p>`;
+  out.push(plegable("sec-radio", "Radio", `próximo: ${pb[0].est} ${pb[0].hora}`, cuerpoRadio));
+
+  // 4. Fondeaderos
+  const entra = (maxE, maxM) => eslora == null && manga == null ? "" : ` ${tilde((eslora == null || eslora <= maxE) && (manga == null || maxM == null || manga <= maxM))}`;
+  const cuerpoFondeo = `<h3 class="sub">Uso normal, fuera del canal (art. 2.13.1)</h3><ul class="reglas">
+    ${FONDEO_NORMAL.map((f) => `<li><strong>${kmR(f.km)}</strong> · ${f.tramo}: máximo 3 buques de hasta 277 m de eslora y 44 m de manga · profundidad mayor a 10,36 m · a criterio de la Autoridad Marítima${entra(277, 44)}</li>`).join("")}</ul>
+    <h3 class="sub">Emergencia, fuera del canal (art. 2.13.2)</h3><ul class="reglas">
+    <li><strong>${kmR([108.3, 109.2])}</strong> · Canal del Infierno, veril rojo · profundidad mayor a 10,36 m<br>
+      máximo 1 buque subiendo de hasta 277 m × 44 m${entra(277, 44)} <em>o</em> 1 buque bajando de hasta 185 m de eslora (manga sin límite)${entra(185, null)}</li>
+    <li><strong>${kmR([84.7, 85.7])}</strong> · Pozos de San Juan, veril rojo, área demarcada con señales especiales amarillas · profundidad 7,15 m (23'06")<br>
+      máximo 2 buques de hasta 255 m de eslora (manga sin límite)${entra(255, null)}</li></ul>
+    ${eslora == null && manga == null ? `<p class="nota">Cargá eslora y manga en Más → Ajustes para ver si tu buque entra.</p>` : ""}
+    <p class="nota">REMAGA 2019, art. 2.13 ${info("remaga")}</p>`;
+  out.push(plegable("sec-fondeo", "Fondeaderos", "2 normales · 2 de emergencia", cuerpoFondeo));
+  return out.join("");
+}
 
 // ---------- visibilidad pronosticada (Open-Meteo: ECMWF 9 km y GFS) ----------
 // Limites del REMAGA 2019. Para cambiarlos, tocar solo estos dos numeros (en metros).
@@ -719,7 +889,7 @@ function render(d) {
   if (ajustesNodo.isConnected) ajustesNodo.remove(); // el formulario se conserva entre actualizaciones (no se pierde lo que estas escribiendo)
   raiz.innerHTML = barra(d, cd, ag.c) + `<main>
     <div class="pestana" data-p="tiempo">${norden(ix, d.pron6 ?? [])}${pronostico(d.pronostico ?? [], d.config, d.vis ?? [])}${marea(d.l24 ?? [])}${otras(ix, nombre)}${alertasSec(d)}</div>
-    <div class="pestana" data-p="canal">${ag.resumen}${ag.tramos}${canal(d, cd)}</div>
+    <div class="pestana" data-p="canal">${ag.resumen}${ag.tramos}${canal(d, cd)}${remagaSecs(d, ix, aguaAj)}</div>
     <div class="pestana" data-p="mas"><div id="hueco-ajustes"></div>${realVsPron(d)}${robot(d)}${fuentesSec()}</div></main>
     <nav class="pestanas" aria-label="Secciones">${PESTANAS.map(([p, n]) => `<button type="button" data-pestana="${p}" aria-current="${p === pestana ? "page" : "false"}">${ic(p)}<span>${n}</span>${p === "mas" && robotMal ? '<i class="punto-mas" title="El robot tiene un problema"></i>' : ""}</button>`).join("")}</nav>`;
   raiz.querySelector("#hueco-ajustes").replaceWith(ajustesNodo);
@@ -795,7 +965,7 @@ form.elements.unidad.addEventListener("change", (ev) => {
 // Guardar: margen menor que 0,60 (u otro valor que no va) no se guarda.
 form.addEventListener("submit", (ev) => {
   ev.preventDefault();
-  const r = revisarAgua({ calado: form.elements.calado.value.trim(), unidad: form.elements.unidad.value, margen: form.elements.margen.value.trim(), colchon: form.elements.colchon.value.trim() });
+  const r = revisarAgua({ calado: form.elements.calado.value.trim(), unidad: form.elements.unidad.value, margen: form.elements.margen.value.trim(), colchon: form.elements.colchon.value.trim(), eslora: form.elements.eslora.value.trim(), manga: form.elements.manga.value.trim() });
   errorAgua.hidden = !r.error; errorAgua.textContent = r.error ?? "";
   if (r.error) { errorAgua.scrollIntoView({ block: "nearest" }); return; }
   aguaAj = r.valores;

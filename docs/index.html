@@ -23,8 +23,10 @@
     <h2 class="titulo">Ajustes <span>se guardan en este celular</span></h2>
     <form id="form-ajustes" novalidate>
       <fieldset>
-        <legend>Agua en el canal</legend>
+        <legend>Mi buque</legend>
         <label>Calado del buque <span class="par"><input type="number" step="0.01" min="0" name="calado" placeholder="sin cargar"><select name="unidad" aria-label="Unidad del calado"><option value="m">m</option><option value="ft">pies</option></select></span></label>
+        <label>Eslora (m) <input type="number" step="0.1" min="10" name="eslora" placeholder="sin cargar"></label>
+        <label>Manga (m) <input type="number" step="0.01" min="2" name="manga" placeholder="sin cargar"></label>
         <label>Margen bajo la quilla (m) <input type="number" step="0.01" min="0.6" name="margen"></label>
         <label>Colchón amarillo (m) <input type="number" step="0.01" min="0" name="colchon"></label>
         <p class="nota">El margen no puede ser menor que 0,60 m (REMAGA 2019, art. 2.9).</p>

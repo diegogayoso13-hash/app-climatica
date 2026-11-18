@@ -359,3 +359,16 @@ body > #ajustes { display: none; } /* el formulario se muestra dentro de la pest
 .app #aviso-inicial h2 span { color: var(--l-amarillo); }
 .app #aviso-inicial p { margin: 0 0 10px; line-height: 1.45; }
 .app #aviso-inicial .botones button { width: 100%; min-height: 52px; font-size: 1rem; }
+
+/* REMAGA: zonas de cruce, buque grande, radio, fondeaderos */
+.app .km-lista { list-style: none; padding: 0; margin: 4px 0 8px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.app .reglas { padding-left: 18px; margin: 4px 0 8px; font-size: .88rem; display: grid; gap: 6px; }
+.app .reglas small, .app .plegable .cuerpo p small { color: var(--suave); }
+.app .plegable .cuerpo > p { font-size: .9rem; margin: 6px 0; }
+.app .ok-r { color: var(--l-verde); font-weight: 700; }
+.app .mal-r { color: var(--l-rojo); font-weight: 700; }
+.app .aviso-r { display: flex; gap: 8px; align-items: flex-start; color: var(--l-rojo); }
+.app .aviso-r svg { flex: none; }
+.app details.ver-tabla { margin: 8px 0; }
+.app details.ver-tabla > summary { cursor: pointer; color: var(--acento); font-weight: 600; min-height: 40px; display: flex; align-items: center; }
+.app[data-tema="noche"] .ok-r, .app[data-tema="noche"] .mal-r, .app[data-tema="noche"] .aviso-r { color: var(--texto); }
