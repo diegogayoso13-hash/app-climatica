@@ -372,3 +372,61 @@ body > #ajustes { display: none; } /* el formulario se muestra dentro de la pest
 .app details.ver-tabla { margin: 8px 0; }
 .app details.ver-tabla > summary { cursor: pointer; color: var(--acento); font-weight: 600; min-height: 40px; display: flex; align-items: center; }
 .app[data-tema="noche"] .ok-r, .app[data-tema="noche"] .mal-r, .app[data-tema="noche"] .aviso-r { color: var(--texto); }
+
+/* ===== Mapa del canal ===== */
+.app .abrir-mapa { width: 100%; min-height: 52px; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: .95rem; }
+html.con-mapa body { overflow: hidden; }
+.app .panel-mapa { position: fixed; inset: 0; z-index: 20; background: var(--fondo); display: flex; flex-direction: column; }
+.app .panel-mapa[hidden] { display: none; }
+.app .mapa-barra { display: flex; align-items: center; gap: 8px; min-height: 52px; padding: env(safe-area-inset-top, 0px) 8px 0 4px; background: var(--barra); border-bottom: 1px solid var(--borde); }
+.app .mapa-barra strong { flex: 1; }
+.app .mapa-barra .btn-icono { font-size: 1.4rem; }
+.app .mapa-act { font-size: .8rem; color: var(--suave); }
+.app .mapa-cont { position: relative; flex: 1; min-height: 0; }
+.app .mapa { position: absolute; inset: 0; background: var(--fondo); }
+.app .btn-gps { position: absolute; right: 12px; bottom: 16px; z-index: 500; width: 52px; height: 52px; min-height: 52px; padding: 0; border-radius: 50%; font-size: 1.4rem; box-shadow: 0 2px 6px rgba(0,0,0,.35); }
+.app .btn-gps.activo { border-color: var(--acento); box-shadow: 0 0 0 3px var(--acento); }
+.app .mapa-pos { position: absolute; left: 12px; right: 76px; bottom: 16px; z-index: 500; background: var(--tarjeta); border: 1px solid var(--borde); border-radius: 10px; padding: 8px 10px; font-weight: 700; font-size: .9rem; box-shadow: 0 2px 6px rgba(0,0,0,.25); }
+.app .mapa-pos[hidden] { display: none; }
+.app .mapa-pie { background: var(--tarjeta); border-top: 1px solid var(--borde); padding: 6px 12px calc(6px + env(safe-area-inset-bottom, 0px)); max-height: 45vh; overflow: auto; font-size: .82rem; }
+.app .mapa-pie > summary { list-style: none; cursor: pointer; display: flex; justify-content: space-between; gap: 8px; min-height: 36px; align-items: center; color: var(--suave); }
+.app .mapa-pie > summary::-webkit-details-marker { display: none; }
+.app .chev-m { color: var(--acento); white-space: nowrap; font-weight: 600; }
+.app .ley-fila { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 6px 0; }
+.app .ley-fila span { display: inline-flex; align-items: center; gap: 6px; }
+.app .ley-linea { display: inline-block; width: 22px; height: 6px; border-radius: 3px; }
+.app .ley-linea.ancha { height: 12px; background: var(--acento); opacity: .3; }
+/* senales: forma segun el tipo (IALA B: verde = babor, tambor; roja = estribor, cono) */
+/* .senal ya es position:absolute (Leaflet): no pisarlo */
+.app .sm { display: inline-block; width: 14px; height: 14px; box-sizing: border-box; border: 2px solid #000; vertical-align: middle; }
+.app .senal .sm { position: absolute; left: 2px; top: 2px; }
+.app .sm-verde { background: #1f9d3a; }
+.app .sm-roja, .app .sm-cpb { background: none; border: 0; width: 0; height: 0; border-left: 8px solid transparent; border-right: 8px solid transparent; border-bottom: 14px solid #d62828; filter: drop-shadow(0 0 1px #000); }
+.app .sm-cpb { filter: drop-shadow(0 2px 0 #1f9d3a); }
+.app .sm-cardinal { background: linear-gradient(#111 50%, #f2c400 50%); transform: rotate(45deg); width: 12px; height: 12px; }
+.app .sm-peligro { background: linear-gradient(#111 33%, #d62828 33% 66%, #111 66%); border-radius: 50%; }
+.app .sm-baliza { background: #fff; border-radius: 50%; }
+.app .sm-anillo { position: absolute; left: -7px; top: -7px; width: 32px; height: 32px; border-radius: 50%; border: 3px solid #e0a800; box-sizing: border-box; }
+.app .sm-anillo.e-falta { border-color: #e03131; border-width: 4px; }
+.app .sm-anillo.e-ok { border-color: #2f9e44; }
+.app .sm-et { position: absolute; left: 24px; top: -3px; white-space: nowrap; font: 800 11px Roboto, system-ui, sans-serif; color: #fff; background: #e03131; padding: 1px 5px; border-radius: 4px; }
+.app .sm-anillo.e-aviso + .sm-et { background: #8a6400; }
+.app .sm-anillo.e-ok + .sm-et { background: #2f9e44; }
+.app .km-et { font: 700 11px Roboto, system-ui, sans-serif; color: var(--texto); background: color-mix(in srgb, var(--tarjeta) 80%, transparent); padding: 1px 4px; border-radius: 4px; white-space: nowrap; }
+.app .fondeo-et { font-size: 16px; text-align: center; line-height: 22px; background: var(--tarjeta); border: 2px solid var(--acento); border-radius: 50%; }
+.app .fondeo-et.emerg { border-color: var(--l-naranja); }
+.app .yo-punto { display: block; width: 18px; height: 18px; margin: 2px; border-radius: 50%; background: #1a73e8; border: 3px solid #fff; box-shadow: 0 0 0 2px #1a73e8, 0 0 10px rgba(26,115,232,.8); }
+.app .leaflet-container { font: inherit; background: var(--fondo); }
+.app .leaflet-popup-content { font-size: .88rem; line-height: 1.4; }
+/* fondo del mapa segun el modo (las senales y los tramos no se filtran) */
+.app[data-tema="oscuro"] .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(.85) contrast(.9); }
+@media (prefers-color-scheme: dark) { .app:not([data-tema]) .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(.85) contrast(.9); } }
+.app[data-tema="noche"] .leaflet-tile-pane { filter: grayscale(1) invert(1) brightness(.45) sepia(1) hue-rotate(-50deg) saturate(6); }
+/* noche: sin colores, las senales se distinguen por la forma */
+.app[data-tema="noche"] .sm-verde, .app[data-tema="noche"] .sm-cardinal, .app[data-tema="noche"] .sm-peligro, .app[data-tema="noche"] .sm-baliza { background: #ff6b5b; border-color: #000; }
+.app[data-tema="noche"] .sm-roja, .app[data-tema="noche"] .sm-cpb { border-bottom-color: #ff6b5b; }
+.app[data-tema="noche"] .sm-anillo { border-color: #ff6b5b; }
+.app[data-tema="noche"] .sm-et { background: #ff6b5b !important; color: #000; }
+.app[data-tema="noche"] .yo-punto { background: #ff6b5b; box-shadow: 0 0 0 2px #ff6b5b; }
+.app[data-tema="noche"] .leaflet-control-zoom a, .app[data-tema="noche"] .leaflet-control-attribution { background: #0e0303; color: #ff6b5b; }
+.app[data-tema="noche"] .fondeo-et, .app[data-tema="noche"] .btn-gps { filter: grayscale(1) sepia(1) hue-rotate(-50deg) saturate(5) brightness(.9); }

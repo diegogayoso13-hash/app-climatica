@@ -889,11 +889,12 @@ function render(d) {
   if (ajustesNodo.isConnected) ajustesNodo.remove(); // el formulario se conserva entre actualizaciones (no se pierde lo que estas escribiendo)
   raiz.innerHTML = barra(d, cd, ag.c) + `<main>
     <div class="pestana" data-p="tiempo">${norden(ix, d.pron6 ?? [])}${pronostico(d.pronostico ?? [], d.config, d.vis ?? [])}${marea(d.l24 ?? [])}${otras(ix, nombre)}${alertasSec(d)}</div>
-    <div class="pestana" data-p="canal">${ag.resumen}${ag.tramos}${canal(d, cd)}${remagaSecs(d, ix, aguaAj)}</div>
+    <div class="pestana" data-p="canal">${ag.resumen}<button type="button" class="abrir-mapa" data-abrir-mapa="1"><span aria-hidden="true">🗺</span> Abrir mapa del canal</button>${ag.tramos}${canal(d, cd)}${remagaSecs(d, ix, aguaAj)}</div>
     <div class="pestana" data-p="mas"><div id="hueco-ajustes"></div>${realVsPron(d)}${robot(d)}${fuentesSec()}</div></main>
     <nav class="pestanas" aria-label="Secciones">${PESTANAS.map(([p, n]) => `<button type="button" data-pestana="${p}" aria-current="${p === pestana ? "page" : "false"}">${ic(p)}<span>${n}</span>${p === "mas" && robotMal ? '<i class="punto-mas" title="El robot tiene un problema"></i>' : ""}</button>`).join("")}</nav>`;
   raiz.querySelector("#hueco-ajustes").replaceWith(ajustesNodo);
   verPestana(pestana, { arriba: false });
+  if (typeof dibujarMapa === "function" && document.getElementById("panel-mapa") && !document.getElementById("panel-mapa").hidden) dibujarMapa(d);
   for (const el of raiz.querySelectorAll("details[data-clave]")) {
     if (abiertosAhora.has(el.dataset.clave)) el.open = true;
     if (cerradosAhora.has(el.dataset.clave)) el.open = false;
@@ -913,6 +914,7 @@ raiz.addEventListener("click", (ev) => {
   if (!b) return;
   if (b.dataset.marea) { mareaExtra = mareaExtra === b.dataset.marea ? null : b.dataset.marea; guardarLocal("marea_extra", mareaExtra); render(ultimos); return; }
   if (b.dataset.info) { const t = b.nextElementSibling, abrir = t.hidden; t.hidden = !abrir; b.setAttribute("aria-expanded", String(abrir)); return; }
+  if (b.dataset.abrirMapa) { abrirMapa(); return; }
   if (b.dataset.pestana) { verPestana(b.dataset.pestana); return; }
   if (b.dataset.ir) { irA(b.dataset.ir); return; }
   if (b.dataset.abrirAjustes) { irA("ajustes"); setTimeout(() => form.elements.calado.focus({ preventScroll: true }), 400); return; }
@@ -1005,6 +1007,7 @@ document.getElementById("btn-aviso-ok").addEventListener("click", () => {
 colorBarraCelular();
 if (!window.MODO_PRUEBA) { // la pagina de pruebas (solo en la compu) usa las funciones sin bajar datos
   mostrarAvisoSiHaceFalta();
+  if (location.hash === "#mapa") { history.replaceState(null, "", location.pathname + location.search); setTimeout(() => abrirMapa(), 300); }
   const cache = leerLocal("ultimos_datos");
   if (cache) render(cache.d);
   actualizar();
