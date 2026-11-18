@@ -19,12 +19,21 @@
 <body>
   <div id="raiz"><p style="padding:16px">Cargando…</p></div>
 
-  <dialog id="ajustes">
-    <form method="dialog" id="form-ajustes">
-      <h2>Ajustes</h2>
+  <section class="tarjeta" id="ajustes">
+    <h2 class="titulo">Ajustes <span>se guardan en este celular</span></h2>
+    <form id="form-ajustes" novalidate>
       <fieldset>
-        <legend>Pantalla</legend>
-        <label>Modo noche (todo en rojo) <input type="checkbox" name="noche"></label>
+        <legend>Agua en el canal</legend>
+        <label>Calado del buque <span class="par"><input type="number" step="0.01" min="0" name="calado" placeholder="sin cargar"><select name="unidad" aria-label="Unidad del calado"><option value="m">m</option><option value="ft">pies</option></select></span></label>
+        <label>Margen bajo la quilla (m) <input type="number" step="0.01" min="0.6" name="margen"></label>
+        <label>Colchón amarillo (m) <input type="number" step="0.01" min="0" name="colchon"></label>
+        <p class="nota">El margen no puede ser menor que 0,60 m (REMAGA 2019, art. 2.9).</p>
+        <p class="nota error-form" id="error-agua" hidden></p>
+      </fieldset>
+      <fieldset>
+        <legend>Altura del río (m, LIMB)</legend>
+        <label>Mínimo <input type="number" step="0.01" name="rioMin" placeholder="sin cargar"></label>
+        <p class="nota">Rojo por debajo del mínimo; amarillo hasta 0,2 m por encima; verde más arriba. Vacío: sin color.</p>
       </fieldset>
       <fieldset>
         <legend>Viento medio (nudos)</legend>
@@ -38,25 +47,16 @@
         <label>Rojo desde <input type="number" step="0.1" name="gRojo"></label>
       </fieldset>
       <fieldset>
-        <legend>Altura del río (m, LIMB)</legend>
-        <label>Mínimo <input type="number" step="0.01" name="rioMin" placeholder="sin cargar"></label>
-        <p class="nota">Rojo por debajo del mínimo; amarillo hasta 0,2 m por encima; verde más arriba. Vacío: sin color.</p>
-      </fieldset>
-      <fieldset>
-        <legend>Agua en el canal</legend>
-        <label>Calado del buque <span class="par"><input type="number" step="0.01" min="0" name="calado" placeholder="sin cargar"><select name="unidad" aria-label="Unidad del calado"><option value="m">m</option><option value="ft">pies</option></select></span></label>
-        <label>Margen bajo la quilla (m) <input type="number" step="0.01" min="0.6" name="margen"></label>
-        <label>Colchón amarillo (m) <input type="number" step="0.01" min="0" name="colchon"></label>
-        <p class="nota">El margen no puede ser menor que 0,60 m (REMAGA 2019, art. 2.9). Rojo: menos que el margen; amarillo: hasta el margen + el colchón; verde: más.</p>
-        <p class="nota error-form" id="error-agua" hidden></p>
+        <legend>Pantalla</legend>
+        <label>Modo noche (todo en rojo) <input type="checkbox" name="noche"></label>
       </fieldset>
       <div class="botones">
+        <span class="guardado" id="guardado" hidden>Guardado ✓</span>
         <button type="button" id="btn-defecto">Valores por defecto</button>
-        <button value="cancelar" formnovalidate>Cancelar</button>
-        <button value="guardar" class="primario">Guardar</button>
+        <button type="submit" class="primario">Guardar</button>
       </div>
     </form>
-  </dialog>
+  </section>
 
   <script src="app.js"></script>
 </body>

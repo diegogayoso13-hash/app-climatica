@@ -1,6 +1,6 @@
 // Guarda los archivos de la app para que abra sin señal.
 // Los datos NO pasan por aca: la app guarda la ultima lectura en el celular y avisa que es vieja.
-const CACHE = "tu-faro-v14";
+const CACHE = "tu-faro-v15";
 const ARCHIVOS = ["./", "index.html", "estilos.css", "app.js", "manifest.webmanifest", "icono-192.png", "icono-512.png", "icono.svg"];
 
 self.addEventListener("install", (e) => {

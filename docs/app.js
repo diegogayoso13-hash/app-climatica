@@ -57,6 +57,9 @@ const IC = {
   lluvia: '<path d="M7 14a4 4 0 0 1-.5-8 6 6 0 0 1 11.5 1.5A3.5 3.5 0 0 1 17.5 14"/><path d="M9 17l-1 3M13 17l-1 3M17 17l-1 3"/>',
   lapiz: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M14 6l4 4"/>',
   ok: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+  tiempo: '<path d="M7 18a4 4 0 0 1-.6-7.96A6 6 0 0 1 18 10a4 4 0 0 1 0 8z"/><path d="M15 3.5v1.5M19.6 5.4l-1 1M21.5 10H20"/>',
+  canal: '<circle cx="12" cy="5" r="2"/><path d="M12 7v14M5 12H3a9 9 0 0 0 18 0h-2M8 10h8"/>',
+  mas: '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>',
   faro: '<path d="M9.5 6.2 12 4l2.5 2.2z"/><rect x="9.8" y="6.2" width="4.4" height="4.2" rx=".5"/><path d="M8.6 10.4h6.8M10.4 10.4l-1 9.6h5.2l-1-9.6M10 14h4M9.7 17h4.6M8 7.2l-3.5-1.3M8 9.2l-3.5 1.3M16 7.2l3.5-1.3M16 9.2l3.5 1.3"/>',
 };
 const ic = (n, clase = "ic") => `<svg class="${clase}" viewBox="0 0 24 24" aria-hidden="true">${IC[n]}</svg>`;
@@ -134,17 +137,19 @@ function canalDatos(d) {
 }
 
 // ---------- barra de arriba ----------
-function barra(d, cd) {
+function barra(d, cd, ag) {
   const carteles = [];
   if (sinSenal) carteles.push(`<div class="cartel rojo">${ic("sinSenal")}<span>Sin señal – mostrando datos guardados de las ${fechaHora(sinSenal)} (${hace(sinSenal)}). Pueden estar viejos.</span></div>`);
   const al = d.alertas ?? [];
   if (al.length) carteles.push(`<button type="button" class="cartel rojo" data-ir="sec-alertas">${ic("alerta")}<span>${al.length === 1 ? "Alerta SMN vigente" : `${al.length} alertas SMN vigentes`}: ${esc([...new Set(al.map((a) => a.evento))].join(", "))}</span><span class="ir">${ic("chev")}</span></button>`);
   const n = cd.nuevas.size;
-  if (n) carteles.push(`<button type="button" class="cartel azul" data-ir="sec-canal">${ic("campana")}<span>${n} novedad${n > 1 ? "es" : ""} del canal</span><span class="ir">${ic("chev")}</span></button>`);
+  if (n) carteles.push(`<button type="button" class="cartel azul" data-ir="sec-novedades">${ic("campana")}<span>${n} novedad${n > 1 ? "es" : ""} del canal</span><span class="ir">${ic("chev")}</span></button>`);
   const niebla = nieblaProxima(d.vis);
   if (niebla) carteles.push(`<button type="button" class="cartel rojo" data-ir="sec-pron">${ic("alerta")}<span>Niebla prevista: menos de ${(VIS_ROJO / 1000).toLocaleString("es-UY")} km desde las ${hora(niebla)}</span><span class="ir">${ic("chev")}</span></button>`);
+  const rojos = (ag?.filas ?? []).filter((f) => f.estado === "rojo");
+  if (rojos.length) carteles.push(`<button type="button" class="cartel rojo" data-ir="sec-resumen">${ic("alerta")}<span>${rojos.length === 1 ? `Tramo en rojo: ${esc(rojos[0].t.nombre)}` : `${rojos.length} tramos en rojo`} · quedan ${m2(Math.min(...rojos.map((f) => f.quilla)))} m bajo la quilla</span><span class="ir">${ic("chev")}</span></button>`);
   if (relevNuevo(d)) carteles.push(`<button type="button" class="cartel azul" data-ir="sec-agua">${ic("campana")}<span>La CARP publicó un relevamiento nuevo</span><span class="ir">${ic("chev")}</span></button>`);
-  return `<header class="barra"><div class="barra-fila"><div class="marca">${ic("faro")}Tu Faro</div><span class="act">${sinSenal ? "Sin señal" : `Act. ${hora(Date.now())}`}</span><button type="button" class="btn-icono" id="btn-ajustes" aria-label="Ajustes" title="Ajustes">${ic("engranaje")}</button></div>${carteles.join("")}</header>`;
+  return `<header class="barra"><div class="barra-fila"><div class="marca">${ic("faro")}Tu Faro</div><span class="act">${sinSenal ? "Sin señal" : `Act. ${hora(Date.now())}`}</span></div>${carteles.join("")}</header>`;
 }
 
 // ---------- Norden ----------
@@ -272,87 +277,114 @@ function tendenciaAgua(tramos, ix, aj, astro, ahora = Date.now()) {
   }
   return c;
 }
-const FLECHA = { sube: "↑ sube", baja: "↓ baja", igual: "= igual" };
-function tendenciaHtml(c, nom) {
-  const f = c.critico;
-  if (!f) return "";
-  const sinCal = c.calado == null;
-  if (!f.tend) return `<div class="tendencia"><div class="tend-tit">Tendencia próximas 3 h</div><p class="nota" style="margin:0">Sin tendencia: falta marea reciente o las componentes de marea de ${esc(f.frescas.map((e) => nom(e.id)).join(" y ") || "sus estaciones")}.</p></div>`;
-  const celda = (x, campo) => `<td class="${sinCal ? "" : CLASE[x.estado] ?? ""}"><span class="tv">${m2(x[campo])}</span></td>`;
-  const reales = f.estsTend.map((e) => `${nom(e.id)} ${hora(e.l.ts)}`).join(" y ");
-  const avisoTxt = c.aviso ? `<div class="tend-aviso">${ic("alerta")}<span>En ${c.aviso.h} h el tramo con menos agua pasa a ser <strong>${esc(c.aviso.t.nombre)}</strong>: ${m2(c.aviso.x.agua)} m${sinCal ? "" : ` · ${m2(c.aviso.x.quilla)} m bajo la quilla`}</span></div>` : "";
-  return `<div class="tendencia">
-    <div class="tend-tit">Tendencia próximas 3 h · ${esc(f.t.nombre)}</div>
-    <table class="tend-tabla"><tr><th></th><th>ahora</th>${f.tend.map((x) => `<th>en ${x.h} h<small>${hora(x.t)}</small></th>`).join("")}</tr>
-      <tr><th>agua</th><td class="${sinCal ? "" : CLASE[f.estado] ?? ""}"><span class="tv">${m2(f.agua)}</span></td>${f.tend.map((x) => celda(x, "agua")).join("")}</tr>
-      ${sinCal ? "" : `<tr><th>quilla</th><td class="${CLASE[f.estado] ?? ""}"><span class="tv">${m2(f.quilla)}</span></td>${f.tend.map((x) => celda(x, "quilla")).join("")}</tr>`}
-      <tr class="tend-flecha"><th></th><td></td>${f.tend.map((x) => `<td>${FLECHA[x.flecha]}</td>`).join("")}</tr></table>
-    ${avisoTxt}
-    <p class="nota">Del lado seguro: predicción menos el error medido (${ERROR_TENDENCIA.map((e) => m2(e)).join(" / ")} m). Predicción propia: marea astronómica de la CARP corregida con lo real de ${reales}${f.estsTend.length === 1 ? " (con una sola estación)" : ""}. No es oficial.</p>
-  </div>`;
-}
-
 const ultimoCambioCarp = (d) => (d?.tramos ?? []).map((t) => t.cambio_carp_en).filter(Boolean).sort().pop() ?? null;
 const relevNuevo = (d) => { const u = ultimoCambioCarp(d); return u && leerLocal("relevamiento_visto") !== u; };
 const CLASE = { rojo: "lim-rojo", amarillo: "lim-amarillo", verde: "lim-verde" };
 const IC_ROCA = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 19l4.5-8 3.5 3 3.5-6.5L21 19z"/></svg>';
 const IC_NATURAL = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10c2-2 4-2 6 0s4 2 6 0 4-2 6 0M3 15c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/></svg>';
 
-function aguaSec(d, ix, aj) {
-  const tramos = d.tramos ?? [];
-  if (!tramos.length) return `<section class="tarjeta" id="sec-agua"><h2 class="titulo">Agua en el canal</h2><p class="nota" style="margin:0">Todavía no está la tabla de tramos de la CARP.</p></section>`;
-  const c = tendenciaAgua(tramos, ix, aj, d.astro ?? astroDe(d.armonicos));
-  const nom = (id) => NOM_CORTO[id] ?? id;
-  const sinCal = c.calado == null;
+const FLECHA = { sube: "↑ sube", baja: "↓ baja", igual: "= igual" };
+const RIO = { sube: "sube", baja: "baja", igual: "se mantiene" };
 
-  let cab;
-  if (!c.critico) cab = `<div class="critico">${ic("alerta")}<span>Sin marea reciente en ninguna estación: no se puede calcular el agua.</span></div>`;
+// ---------- textos largos: van detras de un (i) y tambien en Mas -> Fuentes y aclaraciones ----------
+const INFO = {
+  agua: ["Agua en el canal", () => `Agua disponible = profundidad del tramo (tabla "Anchos navegables" de la CARP, cero LIMB) + marea del tramo. La marea del tramo es la más baja de sus dos estaciones con dato de menos de ${VIEJO_MIN} min: si erramos, que muestre menos agua. Colores (con calado cargado): rojo, quedan menos que el margen bajo la quilla (mínimo 0,60 m, REMAGA 2019, art. 2.9); amarillo, hasta el margen + el colchón; verde, más; gris, sin marea reciente (nunca verde). Referencia, no reemplaza al práctico ni a la información oficial. Calcula con el calado del buque detenido: navegando, el buque se hunde un poco más (squat).`],
+  tendencia: ["Tendencia próximas 3 h", () => `Predicción propia, no oficial: marea astronómica de cada estación (componentes calculadas con el historial de la CARP) corregida con la diferencia de ahora entre lo real y lo astronómico (el efecto del viento). Del lado seguro: predicción menos el error medido (${ERROR_TENDENCIA.map((e) => m2(e)).join(" / ")} m) a 1, 2 y 3 h. "Sube / baja / se mantiene" sale de la predicción sin restar (se mantiene si cambia menos de 5 cm). El mínimo esperado mira todos los tramos. Nada más allá de 3 h.`],
+  limb: ["Cero LIMB y horas", () => "Las alturas de marea están en metros sobre el LIMB (Límite Inferior de la Media de todas las Bajamares), el cero que usa la CARP. Hora de Uruguay (UTC-3). Viento en nudos."],
+  vis: ["Visibilidad", () => `Visibilidad pronosticada por Open-Meteo (ECMWF 9 km y GFS; por hora se usa el valor más bajo). No hay medición real en el canal. Rojo: menos de ${VIS_ROJO.toLocaleString("es-UY")} m (REMAGA 2019, art. 2.7.3); amarillo: menos de ${VIS_AMARILLO / 1000} km (Tabla II). La hora de la corrida va en gris si tiene más de 12 h (Open-Meteo no respondió).`],
+  pronostico: ["Pronóstico", () => "Promedio de los modelos ECMWF, GFS e ICON en el Pilote Norden. En cada día: viento y ráfaga máximos en nudos, dirección predominante y visibilidad mínima. Tocá un día para verlo hora por hora."],
+  sohma: ["Novedades del canal", () => `Balizamiento y radioavisos del aviso diario del SOHMA (Armada), solo del Canal Martín García (km 39 a 145,5). "Visto desde": primer día que el robot lo vio en los avisos del SOHMA (el SOHMA no informa desde cuándo está cada novedad). Las notas son tuyas, no oficiales, y quedan solo en este celular.`],
+  fuentes: ["Fuentes", () => "CARP (Norden, Colonia, Conchillas, Carmelo y tabla de tramos), Armada Nacional (SOHMA y estación Colonia), Open-Meteo (ECMWF, GFS, ICON), SMN (alertas). Esta app es una ayuda: no reemplaza la consulta de las fuentes oficiales para tomar decisiones de seguridad."],
+};
+const info = (k) => `<button type="button" class="info-b" data-info="${k}" aria-label="Más información" aria-expanded="false">i</button><span class="info-t" hidden>${esc(INFO[k][1]())}</span>`;
+
+// ---------- canal: resumen y agua por tramo ----------
+function canalAgua(d, ix, aj, cd) {
+  const tramos = d.tramos ?? [];
+  const nom = (id) => NOM_CORTO[id] ?? id;
+  if (!tramos.length) return { c: null, resumen: `<section class="tarjeta" id="sec-resumen"><h2 class="titulo">Resumen</h2><p class="nota" style="margin:0">Todavía no está la tabla de tramos de la CARP.</p></section>`, tramos: "" };
+  const c = tendenciaAgua(tramos, ix, aj, d.astro ?? astroDe(d.armonicos));
+  const sinCal = c.calado == null, f = c.critico;
+
+  // Tramo critico
+  let crit;
+  if (!f) crit = `<div class="critico">${ic("alerta")}<span>Sin marea reciente en ninguna estación: no se puede calcular el agua.</span></div>`;
   else {
-    const f = c.critico;
-    const quilla = sinCal ? "" : f.quilla < 0 ? ` · <strong>el calado supera el agua por ${m2(-f.quilla)} m</strong>` : ` · quedan ${m2(f.quilla)} m bajo la quilla`;
-    cab = `<div class="critico ${sinCal ? "" : CLASE[f.estado]}"><span>Tramo crítico: <strong>${esc(f.t.nombre)}</strong> · ${m2(f.agua)} m de agua${quilla}${c.sinMarea ? ` <small>(${c.sinMarea} tramo${c.sinMarea > 1 ? "s" : ""} sin marea)</small>` : ""}</span></div>`;
+    const quilla = sinCal ? "" : f.quilla < 0 ? `<br><strong>el calado supera el agua por ${m2(-f.quilla)} m</strong>` : `<br>quedan ${m2(f.quilla)} m bajo la quilla`;
+    crit = `<div class="critico ${sinCal ? "" : CLASE[f.estado]}"><span>Tramo crítico: <strong>${esc(f.t.nombre)}</strong> · ${m2(f.agua)} m de agua${quilla}${c.sinMarea ? ` <small>(${c.sinMarea} tramo${c.sinMarea > 1 ? "s" : ""} sin marea)</small>` : ""}</span></div>`;
   }
 
-  const filas = c.filas.map((f) => {
-    const t = f.t, gris = f.estado === "gris";
-    const iconos = [t.tiene_roca ? `<span class="marca-t">${IC_ROCA}roca km ${esc(t.roca_km)}</span>` : "",
-      t.prof_natural ? `<span class="marca-t">${IC_NATURAL}prof. natural${Number(t.natural_desde_km) > Number(t.km_desde) ? ` desde km ${kmTxt(t.natural_desde_km)}` : ""}</span>` : ""].join("");
-    let est;
-    if (gris) est = `${nom(t.estacion_1)} y ${nom(t.estacion_2)} sin dato nuevo de marea`;
-    else if (f.frescas.length === 1) {
-      const otra = f.ests.find((e) => e.id !== f.usada.id);
-      est = `con una sola estación: ${nom(f.usada.id)} ${m2(f.usada.l.marea_m)} m (${nom(otra.id)} sin dato nuevo)`;
-    } else {
-      const otra = f.frescas.find((e) => e !== f.usada);
-      est = `marea ${nom(f.usada.id)} ${m2(f.usada.l.marea_m)} m (la más baja; ${nom(otra.id)} ${m2(otra.l.marea_m)})`;
-    }
-    return `<div class="tramo ${CLASE[f.estado] ?? ""} ${gris ? "gris" : ""} ${f === c.critico ? "es-critico" : ""}">
-      <div class="tr-nom"><span class="tr-n">${esc(t.nombre)}</span><small>km ${kmTxt(t.km_desde)}–${kmTxt(t.km_hasta)} · prof. ${m2(Number(t.profundidad_m))} m</small>${iconos ? `<small class="marcas">${iconos}</small>` : ""}<small class="${f.frescas.length === 1 ? "una" : ""}">${est}</small></div>
-      <div class="tr-val"><span class="tr-agua">${gris ? "–" : m2(f.agua)}<span class="u">m</span></span><small>agua</small></div>
-      ${sinCal ? "" : `<div class="tr-val"><span class="tr-quilla">${gris ? "–" : m2(f.quilla)}<span class="u">m</span></span><small>${gris ? "sin marea" : "bajo quilla"}</small></div>`}
-    </div>`;
+  // Tendencia: una linea (sube/baja + minimo esperado en TODOS los tramos); la tabla, al tocar.
+  let tend = "";
+  c.minimo = null;
+  if (f?.tend) {
+    const rio = f.tend[f.tend.length - 1].flecha;
+    const val = (x) => sinCal ? x.agua : x.quilla;
+    for (const g of c.filas) for (const x of g.tend ?? []) if (!c.minimo || val(x) < val(c.minimo.x)) c.minimo = { g, x };
+    const min = c.minimo;
+    const celda = (x, campo) => `<td class="${sinCal ? "" : CLASE[x.estado] ?? ""}"><span class="tv">${m2(x[campo])}</span></td>`;
+    const reales = f.estsTend.map((e) => `${nom(e.id)} ${hora(e.l.ts)}`).join(" y ");
+    tend = `<details class="tend-d" data-clave="tend-d"><summary>
+      <span class="tend-linea"><span class="rio">${ic(rio)}</span>El río <strong>${RIO[rio]}</strong> en las próximas 3 h <small>(predicción propia)</small></span>
+      <span class="tend-linea tend-min ${sinCal ? "" : CLASE[min.x.estado] ?? ""}">Mínimo esperado en 3 h: <strong>${m2(min.x.agua)} m</strong> en ${esc(min.g.t.nombre)}${sinCal ? "" : ` · quedan ${m2(min.x.quilla)} m bajo la quilla`} <small>(lado seguro)</small></span>
+      <span class="chev">${ic("chev")}</span></summary>
+      <div class="tendencia"><div class="tend-tit">Hora por hora · ${esc(f.t.nombre)}</div>
+      <table class="tend-tabla"><tr><th></th><th>ahora</th>${f.tend.map((x) => `<th>en ${x.h} h<small>${hora(x.t)}</small></th>`).join("")}</tr>
+        <tr><th>agua</th><td class="${sinCal ? "" : CLASE[f.estado] ?? ""}"><span class="tv">${m2(f.agua)}</span></td>${f.tend.map((x) => celda(x, "agua")).join("")}</tr>
+        ${sinCal ? "" : `<tr><th>quilla</th><td class="${CLASE[f.estado] ?? ""}"><span class="tv">${m2(f.quilla)}</span></td>${f.tend.map((x) => celda(x, "quilla")).join("")}</tr>`}
+        <tr class="tend-flecha"><th></th><td></td>${f.tend.map((x) => `<td>${FLECHA[x.flecha]}</td>`).join("")}</tr></table>
+      <p class="nota">Del lado seguro: predicción menos el error medido (${ERROR_TENDENCIA.map((e) => m2(e)).join(" / ")} m). Corregida con lo real de ${reales}${f.estsTend.length === 1 ? " (con una sola estación)" : ""}. No es oficial. ${info("tendencia")}</p></div></details>`;
+  } else if (f) tend = `<p class="nota">Tendencia 3 h: sin datos (falta marea reciente o las componentes de marea).</p>`;
+
+  const nb = cd?.balizas.length ?? 0, nr = cd?.radio.length ?? 0;
+  const resumen = `<section class="tarjeta" id="sec-resumen">
+    <h2 class="titulo">Resumen <span>${sinCal ? "sin calado" : `calado ${m2(c.calado)} m${aj.unidad === "ft" ? ` (${n1(aj.calado)} ft)` : ""} · margen ${m2(c.margen)}`}</span></h2>
+    ${crit}${tend}
+    ${cd ? `<button type="button" class="ir-renglon" data-ir="sec-novedades">${ic("campana")}<span>${nb} baliza${nb === 1 ? "" : "s"} con novedad · ${nr} radioaviso${nr === 1 ? "" : "s"}${cd.nuevas.size ? ' <span class="punto"></span>' : ""}</span>${ic("chev")}</button>` : ""}
+    ${sinCal ? `<button type="button" class="cargar-calado" data-abrir-ajustes="1">${ic("engranaje")}Cargá tu calado</button>` : ""}
+  </section>`;
+
+  // Estaciones sin dato nuevo: se dice una sola vez arriba de la lista (en cada tramo, solo un icono).
+  const grupos = new Map();
+  for (const g of c.filas) {
+    let k = null;
+    if (g.estado === "gris") k = `${nom(g.t.estacion_1)} y ${nom(g.t.estacion_2)} sin dato nuevo|sin marea`;
+    else if (g.frescas.length === 1) { const otra = g.ests.find((e) => e.id !== g.usada.id); k = `${nom(otra.id)} sin dato nuevo|usan solo ${nom(g.usada.id)}`; }
+    if (k) (grupos.get(k) ?? grupos.set(k, []).get(k)).push(g.t);
+  }
+  const ult = Math.max(...tramos.map((t) => Number(t.km_hasta)));
+  const avisosEst = [...grupos.entries()].map(([k, ts]) => {
+    const [quien, que] = k.split("|");
+    const desde = Math.min(...ts.map((t) => Number(t.km_desde))), hasta = Math.max(...ts.map((t) => Number(t.km_hasta)));
+    const cuales = ts.length === 1 ? `${esc(ts[0].nombre)} ${que.replace("usan", "usa")}` : `los tramos del km ${kmTxt(desde)} ${hasta >= ult ? "en adelante" : `al ${kmTxt(hasta)}`} ${que}`;
+    return `<div class="aviso-est">${ic("alerta")}<span>${esc(quien)}: ${cuales}.</span></div>`;
   }).join("");
 
-  // Hora de cada marea usada (solo las que tienen dato nuevo).
-  const usadas = [...new Set(tramos.flatMap((t) => [t.estacion_1, t.estacion_2]))].map((id) => {
-    const l = (ix[id]?.marea ?? [])[0];
-    return `${nom(id)} ${l ? `${hora(l.ts)}${esViejo(l.ts) ? " (vieja, no se usa)" : ""}` : "sin dato"}`;
-  }).join(" · ");
+  const filas = c.filas.map((g) => {
+    const t = g.t, gris = g.estado === "gris", una = g.frescas.length === 1;
+    const marcas = `${t.tiene_roca ? `<span class="mt" title="zona de roca">${IC_ROCA}</span>` : ""}${t.prof_natural ? `<span class="mt" title="profundidad natural">${IC_NATURAL}</span>` : ""}${una ? `<span class="mt una" title="con una sola estación">1</span>` : ""}`;
+    let est;
+    if (gris) est = `${nom(t.estacion_1)} y ${nom(t.estacion_2)} sin dato nuevo de marea`;
+    else if (una) { const otra = g.ests.find((e) => e.id !== g.usada.id); est = `con una sola estación: ${nom(g.usada.id)} ${m2(g.usada.l.marea_m)} m a las ${hora(g.usada.l.ts)} (${nom(otra.id)} sin dato nuevo)`; }
+    else { const otra = g.frescas.find((e) => e !== g.usada); est = `marea ${nom(g.usada.id)} ${m2(g.usada.l.marea_m)} m a las ${hora(g.usada.l.ts)} (la más baja; ${nom(otra.id)} ${m2(otra.l.marea_m)})`; }
+    return `<details class="tramo-d ${CLASE[g.estado] ?? ""} ${gris ? "gris" : ""} ${g === f ? "es-critico" : ""}" data-clave="tramo-${t.orden}"><summary>
+      <span class="tr-nom"><span class="tr-n">${esc(t.nombre)}</span>${marcas}<small>km ${kmTxt(t.km_desde)}–${kmTxt(t.km_hasta)}</small></span>
+      <span class="tr-val"><span class="tr-agua">${gris ? "–" : m2(g.agua)}</span><small>${gris ? "sin marea" : "agua"}</small></span>
+      ${sinCal ? "" : `<span class="tr-val"><span class="tr-quilla">${gris ? "–" : m2(g.quilla)}</span><small>quilla</small></span>`}
+      </summary><div class="detalle">Profundidad ${m2(Number(t.profundidad_m))} m (relevamiento ${esc(t.relevamiento)}) · ancho ${n0(Number(t.ancho_m))} m<br>${est}${t.tiene_roca ? `<br>${IC_ROCA} zona de roca: km ${esc(t.roca_km)}` : ""}${t.prof_natural ? `<br>${IC_NATURAL} profundidad natural${Number(t.natural_desde_km) > Number(t.km_desde) ? ` desde km ${kmTxt(t.natural_desde_km)}` : ""}` : ""}</div></details>`;
+  }).join("");
   const relevs = [...new Set(tramos.map((t) => t.relevamiento))].join(", ");
-  const resumen = sinCal ? "sin calado" : `calado ${m2(c.calado)} m${aj.unidad === "ft" ? ` (${n1(aj.calado)} ft)` : ""} · margen ${m2(c.margen)}`;
-
-  return `<section class="tarjeta" id="sec-agua">
-    <h2 class="titulo">Agua en el canal <span>${resumen}</span></h2>
+  const tramosHtml = `<section class="tarjeta" id="sec-agua">
+    <h2 class="titulo">Agua por tramo <span>${sinCal ? "metros de agua" : "agua · bajo la quilla (m)"}</span></h2>
     ${relevNuevo(d) ? `<div class="ya-lo-vi"><span class="nota" style="margin:0"><strong>La CARP publicó un relevamiento nuevo</strong> (${esc(relevs)}). La tabla ya está actualizada.</span><button type="button" class="primario" id="btn-relev-visto">Visto</button></div>` : ""}
-    ${cab}
-    ${tendenciaHtml(c, nom)}
-    ${sinCal ? `<button type="button" class="cargar-calado" data-abrir-ajustes="1">${ic("engranaje")}Cargá tu calado en el engranaje</button>` : ""}
+    ${avisosEst}
     <div class="tramos">${filas}</div>
-    ${sinCal ? "" : `<p class="nota">Rojo: quedan menos de ${m2(c.margen)} m bajo la quilla. Amarillo: entre ${m2(c.margen)} y ${m2(c.margen + c.colchon)} m. Verde: más de ${m2(c.margen + c.colchon)} m. Gris: sin marea reciente.</p>`}
-    <p class="nota">Relevamiento CARP: <strong>${esc(relevs)}</strong> (cero LIMB) · Marea usada: ${usadas}</p>
-    <p class="nota leyenda-agua">Referencia, no reemplaza al práctico ni a la información oficial. Calcula con el calado del buque detenido: navegando, el buque se hunde un poco más (squat).</p>
+    <p class="nota">Referencia, no oficial · prof. CARP ${esc(relevs.replace(/^(\p{L}{3})\p{L}*/u, "$1."))} ${info("agua")}</p>
   </section>`;
+  return { c, resumen, tramos: tramosHtml };
 }
+// Para las pruebas: el resumen y la lista juntos.
+function aguaSec(d, ix, aj) { const r = canalAgua(d, ix, aj, null); return r.resumen + r.tramos; }
 
 // ---------- visibilidad pronosticada (Open-Meteo: ECMWF 9 km y GFS) ----------
 // Limites del REMAGA 2019. Para cambiarlos, tocar solo estos dos numeros (en metros).
@@ -424,9 +456,9 @@ function pronostico(filas, config, vis) {
   return `<section class="tarjeta" id="sec-pron">
     <h2 class="titulo">Pronóstico <span>próximas 24 h · ${esc(punto?.nombre ?? "Norden")}</span></h2>
     <div class="tira">${cabecera}${prox.map((p) => { const k = fDiaClave.format(new Date(p.t)); const n = k !== diaAnt; diaAnt = k; return columna(p, n); }).join("")}</div>
-    <p class="nota nota-vis">${sinVis ? "<strong>Visibilidad: sin dato.</strong> " : ""}Visibilidad pronosticada (Open-Meteo). No hay medición real en el canal. Rojo: menos de ${VIS_ROJO.toLocaleString("es-UY")} m; amarillo: menos de ${VIS_AMARILLO / 1000} km.${corrVis ? ` ${corrVis}.` : ""}</p>
+    <p class="nota nota-vis">${sinVis ? "<strong>Visibilidad: sin dato.</strong> " : ""}Visibilidad pronosticada (Open-Meteo), no medida${corrVis ? ` · ${corrVis}` : ""} ${info("vis")}</p>
     <div class="dias">${filasDia}</div>
-    <p class="nota">Promedio de los modelos (${corridas.join(" · ")}). En cada día: viento y ráfaga máximos en nudos, dirección predominante y visibilidad mínima. Tocá un día para verlo hora por hora. Visibilidad: el valor más bajo entre ECMWF (9 km) y GFS.</p>
+    <p class="nota">Promedio de los modelos · ${corridas.join(" · ")} ${info("pronostico")}</p>
   </section>`;
 }
 
@@ -532,23 +564,24 @@ function canal(d, cd) {
   if (sohma?.ultimo_error && (!sohma.ultimo_ok || sohma.ultimo_error > sohma.ultimo_ok)) avisos.push(`Error al revisar el SOHMA: ${esc(sohma.mensaje_error)}`);
   if (sohma?.ultimo_ok && minDesde(sohma.ultimo_ok) > 26 * 60) avisos.push(`El robot no pudo revisar el SOHMA desde ${fechaHora(sohma.ultimo_ok)}.`);
 
-  const fila = (n, esNorm) => `<div class="baliza"><span class="km">${n.km != null ? `km ${String(n.km).replace(".", ",")}` : "–"}</span>
-    <span>${nuevo(n)}Nº ${esc(n.clave)} · ${esc((n.descripcion ?? "").replace(/\s*KM\s*[\d.,]+/i, "").toLowerCase())}<small>${esc(tramoLindo(n.tramo))} · ${esNorm ? `normalizada ${fechaHora(n.normalizada_en)}` : `visto desde ${fechaHora(n.primera_vez)}`}</small></span>
-    <span class="etq ${esNorm ? "e-verde" : colorEstado(n.estado)}">${esNorm ? "NORMALIZADA" : esc(n.estado)}</span>
-    <span class="nota-mia">${misNotas[n.clave]
+  const tipoCorto = (n) => esc((n.descripcion ?? "").replace(/\s*KM\s*[\d.,]+/i, "").toLowerCase().replace(/^boya |^baliza /, (m) => m).trim());
+  const fila = (n, esNorm) => `<details class="baliza-d" data-clave="baliza-${esc(n.id)}"><summary>
+    <span class="km">${n.km != null ? `km ${String(n.km).replace(".", ",")}` : "–"}</span>
+    <span class="b-nom">${nuevo(n)}Nº ${esc(n.clave)} · ${tipoCorto(n)}${misNotas[n.clave] ? ` <span class="tiene-nota" title="tiene nota tuya">${ic("lapiz")}</span>` : ""}</span>
+    <span class="etq ${esNorm ? "e-verde" : colorEstado(n.estado)}">${esNorm ? "NORMALIZADA" : esc(n.estado)}</span></summary>
+    <div class="detalle">${esc(tramoLindo(n.tramo))} · ${esNorm ? `normalizada ${fechaHora(n.normalizada_en)}` : `visto desde ${fechaHora(n.primera_vez)}`}${n.texto ? `<br>${esc(n.texto)}` : ""}
+    <div class="nota-mia">${misNotas[n.clave]
       ? `<strong>Tu nota</strong> (${fechaHora(misNotas[n.clave].fecha)}, no oficial): ${esc(misNotas[n.clave].texto)} <button type="button" class="btn-nota" data-nota="${esc(n.clave)}">${ic("lapiz")}editar</button>`
-      : `<button type="button" class="btn-nota" data-nota="${esc(n.clave)}">${ic("lapiz")}agregar nota</button>`}</span></div>`;
+      : `<button type="button" class="btn-nota" data-nota="${esc(n.clave)}">${ic("lapiz")}agregar nota</button>`}</div></div></details>`;
 
   const cuerpo = `${cd.nuevas.size ? `<div class="ya-lo-vi"><span class="nota" style="margin:0">Hay ${cd.nuevas.size} novedad${cd.nuevas.size > 1 ? "es" : ""} desde tu última visita (marcadas NUEVO).</span><button type="button" class="primario" id="btn-visto">Ya lo vi</button></div>` : ""}
     ${avisos.map((a) => `<div class="aviso-int">${a}</div>`).join("")}
-    <p class="nota" style="margin-top:0">${pdf ? `Balizamiento: aviso del ${esc(pdf.lista_emitido ?? "?")}, vigente hasta ${pdf.lista_vigente_hasta ? fechaHora(pdf.lista_vigente_hasta) : "?"} · PDF ${esc(pdf.archivo)} leído ${fechaHora(pdf.leido_en)}` : ""}</p>
+    <p class="nota" style="margin-top:0">${pdf ? `SOHMA: aviso del ${esc(pdf.lista_emitido ?? "?")} · leído ${fechaHora(pdf.leido_en)}` : ""} ${info("sohma")}</p>
     <h3 class="sub">Radioavisos</h3>${cd.radio.length ? cd.radio.map((n) => `<details class="radioaviso" data-clave="avur-${esc(n.clave)}" ${cd.nuevas.has(n.id) ? "open" : ""}><summary>${nuevo(n)}AVUR ${esc(n.clave)} · ${esc((n.descripcion ?? "").replace(/^CANALES A MARTIN GARCIA · /, "").toLowerCase())}</summary><p>${esc(n.texto)}</p><p class="nota">Emitido ${esc(n.emitido ?? "?")}${n.anula ? ` · anula ${esc(n.anula)}` : ""} · hasta ${fechaHora(n.vigente_hasta)} · visto desde ${fechaHora(n.primera_vez)}</p></details>`).join("") : `<p class="nota" style="margin-top:0">Sin radioavisos vigentes para el canal.</p>`}
     <h3 class="sub">Balizamiento (${cd.balizas.length})</h3>${cd.balizas.map((n) => fila(n)).join("") || `<p class="nota" style="margin-top:0">Sin novedades de balizamiento en el canal.</p>`}
-    <h3 class="sub">Normalizadas en los últimos 7 días</h3>${cd.normalizadas.map((n) => fila(n, true)).join("") || `<p class="nota" style="margin-top:0">Ninguna.</p>`}
-    <p class="nota">"Visto desde": primer día que el robot lo vio en los avisos del SOHMA (el SOHMA no informa desde cuándo está cada novedad). Las notas son tuyas y quedan solo en este celular.</p>`;
+    <details class="normalizadas" data-clave="normalizadas"><summary><h3 class="sub">Normalizadas en los últimos 7 días (${cd.normalizadas.length})</h3>${ic("chev")}</summary>${cd.normalizadas.map((n) => fila(n, true)).join("") || `<p class="nota" style="margin-top:0">Ninguna.</p>`}</details>`;
   const res = `${cd.nuevas.size ? '<span class="punto"></span> ' : ""}${cd.radio.length} radioaviso${cd.radio.length === 1 ? "" : "s"} · ${cd.balizas.length} baliza${cd.balizas.length === 1 ? "" : "s"}`;
-  // Radioaviso nuevo sin ver: se abre sola y queda marcada hasta "Ya lo vi".
-  return plegable("sec-canal", "Canal Martín García", res, cuerpo, { forzarAbierta: cd.radioNuevo, marcada: cd.radioNuevo });
+  return `<section class="tarjeta ${cd.radioNuevo ? "marcada" : ""}" id="sec-novedades"><h2 class="titulo">Novedades del canal <span>${res}</span></h2>${cuerpo}</section>`;
 }
 
 const SEVERIDAD = { Minor: ["menor", "--l-amarillo"], Moderate: ["moderada", "--l-amarillo"], Severe: ["severa", "--l-naranja"], Extreme: ["extrema", "--l-rojo"] };
@@ -614,10 +647,35 @@ function resumenComparacion(d) {
 }
 function robot(d) {
   const f = d.fuentes ?? [];
-  const mal = (x) => x.detalle?.terminado ? false : (x.ultimo_error && (!x.ultimo_ok || x.ultimo_error > x.ultimo_ok)) || !x.ultimo_ok || minDesde(x.ultimo_ok) > (PLAZO_FUENTE[x.fuente] ?? VIEJO_MIN);
+  const mal = malFuente;
   const malas = f.filter(mal).length;
   return plegable("sec-robot", "Estado del robot", malas ? `${malas} con problemas` : "todo en orden",
     `<ul class="fuentes">${f.map((x) => `<li><span class="${mal(x) ? "mal" : "ok"}">${ic(mal(x) ? "alerta" : "ok")}</span><span>${esc(NOMBRE_FUENTE[x.fuente] ?? x.fuente)}: ${x.ultimo_ok ? `leída ${hora(x.ultimo_ok)}` : "nunca"}${x.ultimo_error && (!x.ultimo_ok || x.ultimo_error > x.ultimo_ok) ? ` — error: ${esc(x.mensaje_error)}` : ""}${x.fuente === "comparar_marea" && x.detalle ? `<small class="det-fuente">${esc(resumenComparacion(x.detalle))}</small>` : ""}</span></li>`).join("")}</ul>`);
+}
+
+function fuentesSec() {
+  return plegable("sec-fuentes", "Fuentes y aclaraciones", "LIMB, cálculos, fuentes",
+    Object.values(INFO).map(([t, f]) => `<h3 class="sub">${esc(t)}</h3><p class="nota" style="margin-top:0">${esc(f())}</p>`).join(""));
+}
+const malFuente = (x) => x.detalle?.terminado ? false : (x.ultimo_error && (!x.ultimo_ok || x.ultimo_error > x.ultimo_ok)) || !x.ultimo_ok || minDesde(x.ultimo_ok) > (PLAZO_FUENTE[x.fuente] ?? VIEJO_MIN);
+
+// ---------- pestanas ----------
+const PESTANAS = [["tiempo", "Tiempo"], ["canal", "Canal"], ["mas", "Más"]];
+let pestana = PESTANAS.some(([p]) => p === leerLocal("pestana")) ? leerLocal("pestana") : "tiempo";
+function verPestana(p, { arriba = true } = {}) {
+  pestana = p; guardarLocal("pestana", p);
+  for (const el of raiz.querySelectorAll(".pestana")) el.hidden = el.dataset.p !== p;
+  for (const b of raiz.querySelectorAll(".pestanas button")) b.setAttribute("aria-current", b.dataset.pestana === p ? "page" : "false");
+  if (arriba) window.scrollTo(0, 0);
+}
+// Ir a una seccion (desde un cartel o un renglon): cambia de pestana, la abre y la muestra debajo de la barra.
+function irA(id) {
+  const el = document.getElementById(id); if (!el) return;
+  const p = el.closest(".pestana")?.dataset.p;
+  if (p && p !== pestana) verPestana(p, { arriba: false });
+  if (el.tagName === "DETAILS") el.open = true;
+  const alto = raiz.querySelector(".barra")?.offsetHeight ?? 0;
+  window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - alto - 8, behavior: "smooth" });
 }
 
 // ---------- todo ----------
@@ -629,11 +687,16 @@ function render(d) {
   const ix = indexar(d.ultimas ?? []);
   const nombre = Object.fromEntries((d.estaciones ?? []).map((e) => [e.id, e.nombre]));
   const cd = canalDatos(d);
-  raiz.innerHTML = barra(d, cd) + `<main>
-    ${norden(ix, d.pron6 ?? [])}${aguaSec(d, ix, aguaAj)}${pronostico(d.pronostico ?? [], d.config, d.vis ?? [])}${marea(d.l24 ?? [])}${otras(ix, nombre)}
-    ${canal(d, cd)}${alertasSec(d)}${realVsPron(d)}${robot(d)}</main>
-    <footer><div><p>Esta app es una ayuda. No reemplaza la consulta de las fuentes oficiales para tomar decisiones de seguridad.</p>
-    <p>Fuentes: CARP, Armada Nacional (SOHMA), Open-Meteo, SMN. Hora de Uruguay (UTC-3). Viento en nudos, marea en metros (LIMB).</p></div></footer>`;
+  const ag = canalAgua(d, ix, aguaAj, cd);
+  const robotMal = (d.fuentes ?? []).some(malFuente);
+  if (ajustesNodo.isConnected) ajustesNodo.remove(); // el formulario se conserva entre actualizaciones (no se pierde lo que estas escribiendo)
+  raiz.innerHTML = barra(d, cd, ag.c) + `<main>
+    <div class="pestana" data-p="tiempo">${norden(ix, d.pron6 ?? [])}${pronostico(d.pronostico ?? [], d.config, d.vis ?? [])}${marea(d.l24 ?? [])}${otras(ix, nombre)}${alertasSec(d)}</div>
+    <div class="pestana" data-p="canal">${ag.resumen}${ag.tramos}${canal(d, cd)}</div>
+    <div class="pestana" data-p="mas"><div id="hueco-ajustes"></div>${realVsPron(d)}${robot(d)}${fuentesSec()}</div></main>
+    <nav class="pestanas" aria-label="Secciones">${PESTANAS.map(([p, n]) => `<button type="button" data-pestana="${p}" aria-current="${p === pestana ? "page" : "false"}">${ic(p)}<span>${n}</span>${p === "mas" && robotMal ? '<i class="punto-mas" title="El robot tiene un problema"></i>' : ""}</button>`).join("")}</nav>`;
+  raiz.querySelector("#hueco-ajustes").replaceWith(ajustesNodo);
+  verPestana(pestana, { arriba: false });
   for (const el of raiz.querySelectorAll("details[data-clave]")) {
     if (abiertosAhora.has(el.dataset.clave)) el.open = true;
     if (cerradosAhora.has(el.dataset.clave)) el.open = false;
@@ -652,8 +715,10 @@ raiz.addEventListener("click", (ev) => {
   const b = ev.target.closest("button, [data-ir]");
   if (!b) return;
   if (b.dataset.marea) { mareaExtra = mareaExtra === b.dataset.marea ? null : b.dataset.marea; guardarLocal("marea_extra", mareaExtra); render(ultimos); return; }
-  if (b.dataset.ir) { const s = document.getElementById(b.dataset.ir); if (s) { s.open = true; s.scrollIntoView({ behavior: "smooth", block: "start" }); } return; }
-  if (b.id === "btn-ajustes" || b.dataset.abrirAjustes) { abrirAjustes(); return; }
+  if (b.dataset.info) { const t = b.nextElementSibling, abrir = t.hidden; t.hidden = !abrir; b.setAttribute("aria-expanded", String(abrir)); return; }
+  if (b.dataset.pestana) { verPestana(b.dataset.pestana); return; }
+  if (b.dataset.ir) { irA(b.dataset.ir); return; }
+  if (b.dataset.abrirAjustes) { irA("ajustes"); setTimeout(() => form.elements.calado.focus({ preventScroll: true }), 400); return; }
   if (b.id === "btn-relev-visto") { guardarLocal("relevamiento_visto", ultimoCambioCarp(ultimos)); render(ultimos); return; }
   if (b.id === "btn-visto") {
     const cd = canalDatos(ultimos), s = vistas();
@@ -686,13 +751,13 @@ async function actualizar() {
   }
 }
 
-// ---------- ajustes ----------
-const dlg = document.getElementById("ajustes"), form = document.getElementById("form-ajustes");
+// ---------- ajustes (pestana Mas) ----------
+const ajustesNodo = document.getElementById("ajustes"), form = document.getElementById("form-ajustes");
 const llenarForm = (v) => { for (const [k, x] of Object.entries(v)) if (form.elements[k]) form.elements[k].value = x ?? ""; };
-const errorAgua = document.getElementById("error-agua");
-function abrirAjustes() {
+const errorAgua = document.getElementById("error-agua"), guardado = document.getElementById("guardado");
+function cargarAjustes() {
   llenarForm(lim); llenarForm(aguaAj); errorAgua.hidden = true;
-  form.elements.noche.checked = document.documentElement.dataset.tema === "noche"; dlg.showModal();
+  form.elements.noche.checked = document.documentElement.dataset.tema === "noche";
 }
 document.getElementById("btn-defecto").onclick = () => { llenarForm(DEFECTO); llenarForm({ margen: AGUA_DEFECTO.margen, colchon: AGUA_DEFECTO.colchon }); };
 // Al cambiar metros/pies, se pasa el calado cargado a la otra unidad.
@@ -700,17 +765,14 @@ form.elements.unidad.addEventListener("change", (ev) => {
   const x = form.elements.calado.value.trim();
   if (x !== "") form.elements.calado.value = String(Math.round((ev.target.value === "ft" ? Number(x) / PIE : Number(x) * PIE) * 100) / 100);
 });
-// Margen menor que 0,60 (u otro valor que no va): no deja guardar.
+// Guardar: margen menor que 0,60 (u otro valor que no va) no se guarda.
 form.addEventListener("submit", (ev) => {
-  if (ev.submitter?.value !== "guardar") return;
+  ev.preventDefault();
   const r = revisarAgua({ calado: form.elements.calado.value.trim(), unidad: form.elements.unidad.value, margen: form.elements.margen.value.trim(), colchon: form.elements.colchon.value.trim() });
   errorAgua.hidden = !r.error; errorAgua.textContent = r.error ?? "";
-  if (r.error) { ev.preventDefault(); errorAgua.scrollIntoView({ block: "nearest" }); return; }
+  if (r.error) { errorAgua.scrollIntoView({ block: "nearest" }); return; }
   aguaAj = r.valores;
   guardarLocal("agua_canal", aguaAj);
-});
-dlg.addEventListener("close", () => {
-  if (dlg.returnValue !== "guardar") return;
   const nuevo = {};
   for (const k of Object.keys(DEFECTO)) { const x = form.elements[k].value.trim(); nuevo[k] = x === "" ? DEFECTO[k] : Number(x); }
   lim = nuevo;
@@ -719,8 +781,10 @@ dlg.addEventListener("close", () => {
   guardarLocal("modo_noche", noche);
   if (noche) document.documentElement.dataset.tema = "noche"; else delete document.documentElement.dataset.tema;
   colorBarraCelular();
+  guardado.hidden = false; setTimeout(() => { guardado.hidden = true; }, 2500);
   if (ultimos) render(ultimos);
 });
+cargarAjustes();
 
 // Color de la barra del celular: negra en modo noche.
 function colorBarraCelular() {
