@@ -263,3 +263,4 @@ body { margin: 0; background: var(--fondo); }
 .app .tend-flecha td { font-weight: 600; font-size: .78rem; color: var(--suave); }
 .app .tend-aviso { display: flex; gap: 8px; align-items: center; margin-top: 8px; font-size: .85rem; color: var(--l-amarillo); }
 .app .tend-aviso strong { color: var(--texto); }
+.app .fuentes .det-fuente { display: block; color: var(--suave); font-size: .78rem; margin-top: 2px; }

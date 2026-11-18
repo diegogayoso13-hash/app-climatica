@@ -589,15 +589,35 @@ function realVsPron(d) {
     <h3 class="sub">¿Qué modelo acierta más en Norden?</h3>${ranking}`);
 }
 
-const NOMBRE_FUENTE = { carp: "CARP (4 estaciones)", armada_colonia: "Armada Colonia", open_meteo: "Open-Meteo", smn_alertas: "Alertas SMN", sohma: "Avisos SOHMA (cada hora)", carp_tramos: "Tabla de tramos CARP (lunes 9 h)", visibilidad: "Visibilidad (Open-Meteo: ECMWF 9 km y GFS)" };
+const NOMBRE_FUENTE = { carp: "CARP (4 estaciones)", armada_colonia: "Armada Colonia", open_meteo: "Open-Meteo", smn_alertas: "Alertas SMN", sohma: "Avisos SOHMA (cada hora)", carp_tramos: "Tabla de tramos CARP (lunes 9 h)", visibilidad: "Visibilidad (Open-Meteo: ECMWF 9 km y GFS)", comparar_marea: "Comparación de marea SHN / PronUy (prueba)" };
 // Cuanto puede pasar sin lectura buena antes de marcar problema (minutos).
-const PLAZO_FUENTE = { sohma: 90, carp_tramos: 8 * 24 * 60 };
+const PLAZO_FUENTE = { sohma: 90, carp_tramos: 8 * 24 * 60, comparar_marea: 120 };
+// Renglon de la comparacion de marea (robot de prueba de 4 semanas). PronUy caido es solo una nota: no pone rojo.
+const conSigno = (x) => x == null ? "–" : `${x > 0 ? "+" : x < 0 ? "−" : ""}${m2(Math.abs(x))}`;
+function resumenComparacion(d) {
+  if (!d) return "";
+  if (d.terminado) return `Terminada el ${fechaHora(d.terminado_en)} (4 semanas). Datos guardados; informe pendiente.`;
+  const p = [];
+  if (d.dia) p.push(`día ${d.dia} de ${d.de}`);
+  const A = d.A;
+  if (A?.n) {
+    const salto = A.saltos?.length ? A.saltos[A.saltos.length - 1] : null;
+    p.push(`Norden SHN−CARP ${conSigno(A.actual)} m (dispersión ${m2(A.dispersion)}${salto ? `; ⚠ salto de ${conSigno(salto.antes)} a ${conSigno(salto.despues)} el ${fechaHora(salto.t)}` : ""})`);
+  }
+  const B = d.B ?? {}, nC = Object.values(d.C ?? {}).reduce((s, x) => s + (x?.n ?? 0), 0);
+  const b = (x, nom) => x?.n ? `${nom} ${conSigno(x.altura_media)} m / ${conSigno(x.hora_media_h)} h (${x.n})` : null;
+  const bs = [b(B.san_fernando, "S. Fernando"), b(B.buenos_aires, "Bs. As.")].filter(Boolean);
+  p.push(bs.length ? `pronóstico SHN contra lo medido: ${bs.join(" · ")}` : "pronóstico SHN: todavía sin pleamares/bajamares para comparar");
+  if (nC) p.push(`${nC} comparaciones contra Norden/Colonia`);
+  p.push(d.pronuy?.estado === "responde" ? `PronUy: responde (${d.pronuy.guardadas} guardadas)` : `PronUy: sin conexión desde ${fechaHora(d.pronuy?.desde)}`);
+  return p.join(" · ");
+}
 function robot(d) {
   const f = d.fuentes ?? [];
-  const mal = (x) => (x.ultimo_error && (!x.ultimo_ok || x.ultimo_error > x.ultimo_ok)) || !x.ultimo_ok || minDesde(x.ultimo_ok) > (PLAZO_FUENTE[x.fuente] ?? VIEJO_MIN);
+  const mal = (x) => x.detalle?.terminado ? false : (x.ultimo_error && (!x.ultimo_ok || x.ultimo_error > x.ultimo_ok)) || !x.ultimo_ok || minDesde(x.ultimo_ok) > (PLAZO_FUENTE[x.fuente] ?? VIEJO_MIN);
   const malas = f.filter(mal).length;
   return plegable("sec-robot", "Estado del robot", malas ? `${malas} con problemas` : "todo en orden",
-    `<ul class="fuentes">${f.map((x) => `<li><span class="${mal(x) ? "mal" : "ok"}">${ic(mal(x) ? "alerta" : "ok")}</span><span>${esc(NOMBRE_FUENTE[x.fuente] ?? x.fuente)}: ${x.ultimo_ok ? `leída ${hora(x.ultimo_ok)}` : "nunca"}${x.ultimo_error && (!x.ultimo_ok || x.ultimo_error > x.ultimo_ok) ? ` — error: ${esc(x.mensaje_error)}` : ""}</span></li>`).join("")}</ul>`);
+    `<ul class="fuentes">${f.map((x) => `<li><span class="${mal(x) ? "mal" : "ok"}">${ic(mal(x) ? "alerta" : "ok")}</span><span>${esc(NOMBRE_FUENTE[x.fuente] ?? x.fuente)}: ${x.ultimo_ok ? `leída ${hora(x.ultimo_ok)}` : "nunca"}${x.ultimo_error && (!x.ultimo_ok || x.ultimo_error > x.ultimo_ok) ? ` — error: ${esc(x.mensaje_error)}` : ""}${x.fuente === "comparar_marea" && x.detalle ? `<small class="det-fuente">${esc(resumenComparacion(x.detalle))}</small>` : ""}</span></li>`).join("")}</ul>`);
 }
 
 // ---------- todo ----------
