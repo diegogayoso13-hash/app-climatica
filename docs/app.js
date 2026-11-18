@@ -83,7 +83,7 @@ async function bajarTodo() {
   const ahora = new Date().toISOString();
   const hace7d = new Date(Date.now() - 7 * 864e5).toISOString();
   const hace30d = new Date(Date.now() - 31 * 864e5).toISOString().slice(0, 10);
-  const [estaciones, ultimas, pronostico, alertas, fuentes, config, novedades, pdfs, l24, pron6, errores, tramos, vis] = await Promise.all([
+  const [estaciones, ultimas, pronostico, alertas, fuentes, config, novedades, pdfs, l24, pron6, errores, tramos, vis, armonicos] = await Promise.all([
     api("estaciones?select=*&order=orden"),
     api("ultimas_lecturas?select=*&order=estacion,tipo,ts.desc"),
     api("pronostico_actual?select=*&order=hora"),
@@ -97,8 +97,9 @@ async function bajarTodo() {
     api(`error_modelos?select=*&anticipacion=eq.0-24&variable=eq.viento&dia=gte.${hace30d}`),
     api("tramos_canal?select=*&order=orden"),
     api("visibilidad_actual?select=modelo,corrida,hora,visibilidad_m&order=hora"),
+    api("armonicos?select=estacion,componente,velocidad_gh,coef_cos,coef_sin"),
   ]);
-  return { estaciones, ultimas, pronostico, alertas, fuentes, config, novedades, pdfs, l24, pron6, errores, tramos, vis };
+  return { estaciones, ultimas, pronostico, alertas, fuentes, config, novedades, pdfs, l24, pron6, errores, tramos, vis, armonicos };
 }
 function indexar(ultimas) {
   const ix = {};
@@ -207,6 +208,8 @@ function revisarAgua({ calado, unidad, margen, colchon }) {
   return { valores: { calado: c, unidad: unidad === "ft" ? "ft" : "m", margen: m ?? AGUA_DEFECTO.margen, colchon: k ?? AGUA_DEFECTO.colchon } };
 }
 
+const estadoQuilla = (q, margen, colchon) => q < cm(margen) ? "rojo" : q < cm(margen + colchon) ? "amarillo" : "verde";
+
 function calcularAgua(tramos, ix, aj) {
   const calado = caladoM(aj), margen = Math.max(MARGEN_MIN, aj.margen ?? MARGEN_MIN), colchon = Math.max(0, aj.colchon ?? AGUA_DEFECTO.colchon);
   const filas = tramos.map((t) => {
@@ -218,12 +221,75 @@ function calcularAgua(tramos, ix, aj) {
     r.agua = cm(Number(t.profundidad_m) + r.usada.l.marea_m);
     if (calado == null) { r.estado = "sin-calado"; return r; }
     r.quilla = cm(r.agua - calado);
-    r.estado = r.quilla < cm(margen) ? "rojo" : r.quilla < cm(margen + colchon) ? "amarillo" : "verde";
+    r.estado = estadoQuilla(r.quilla, margen, colchon);
     return r;
   });
   const conDato = filas.filter((f) => f.agua != null);
   const critico = conDato.reduce((a, f) => !a || (calado == null ? f.agua < a.agua : f.quilla < a.quilla) ? f : a, null);
   return { filas, critico, calado, margen, colchon, sinMarea: filas.length - conDato.length };
+}
+
+// ---------- tendencia proximas 3 h (prediccion propia, NO oficial) ----------
+// Marea astronomica de cada estacion (componentes calculadas con el historial de la CARP, cero LIMB)
+// + la diferencia de ahora entre lo real y lo astronomico (efecto del viento), que se mantiene 3 h.
+// Del lado seguro: a cada hora se le resta el error medido (95 % de las veces fue menor) en 2026.
+const ERROR_TENDENCIA = [0.15, 0.25, 0.35]; // metros, a 1, 2 y 3 h. Para cambiarlos, tocar solo aca.
+const T0_ARMONICOS = Date.UTC(2020, 0, 1, 3); // 2020-01-01 00:00 hora de Uruguay
+function astroDe(filas) {
+  const por = {};
+  for (const f of filas ?? []) (por[f.estacion] ??= []).push(f);
+  return (est, t) => {
+    const cs = por[est];
+    if (!cs?.length) return null;
+    const x = (new Date(t).getTime() - T0_ARMONICOS) / 3600e3;
+    return cs.reduce((s, c) => { const a = c.velocidad_gh * x * Math.PI / 180; return s + c.coef_cos * Math.cos(a) + c.coef_sin * Math.sin(a); }, 0);
+  };
+}
+function tendenciaAgua(tramos, ix, aj, astro, ahora = Date.now()) {
+  const c = calcularAgua(tramos, ix, aj);
+  for (const f of c.filas) {
+    const ests = f.frescas.filter((e) => astro(e.id, e.l.ts) != null);
+    f.tend = null; f.estsTend = ests;
+    if (!ests.length) continue;
+    f.tend = ERROR_TENDENCIA.map((err, i) => {
+      const t = ahora + (i + 1) * 3600e3;
+      const pred = ests.map((e) => { const central = astro(e.id, t) + (e.l.marea_m - astro(e.id, e.l.ts)); return { id: e.id, central, seguro: central - err }; });
+      const mSeg = Math.min(...pred.map((p) => p.seguro)), mCen = Math.min(...pred.map((p) => p.central));
+      const agua = cm(Number(f.t.profundidad_m) + mSeg), aguaCentral = cm(Number(f.t.profundidad_m) + mCen);
+      const quilla = c.calado == null ? null : cm(agua - c.calado);
+      const dif = f.agua == null ? 0 : aguaCentral - f.agua;
+      return { h: i + 1, t, err, agua, quilla, estado: quilla == null ? "sin-calado" : estadoQuilla(quilla, c.margen, c.colchon),
+        flecha: dif > 0.05 ? "sube" : dif < -0.05 ? "baja" : "igual" };
+    });
+  }
+  // Si en alguna hora otro tramo queda con menos agua que el critico de ahora, se avisa (la primera vez).
+  const val = (x) => c.calado == null ? x.agua : x.quilla;
+  c.aviso = null;
+  if (c.critico?.tend) for (let i = 0; i < ERROR_TENDENCIA.length && !c.aviso; i++) {
+    const otros = c.filas.filter((f) => f !== c.critico && f.tend).map((f) => ({ f, x: f.tend[i] }));
+    const peor = otros.reduce((a, o) => !a || val(o.x) < val(a.x) ? o : a, null);
+    if (peor && val(peor.x) < val(c.critico.tend[i])) c.aviso = { h: i + 1, t: peor.f.t, x: peor.x };
+  }
+  return c;
+}
+const FLECHA = { sube: "↑ sube", baja: "↓ baja", igual: "= igual" };
+function tendenciaHtml(c, nom) {
+  const f = c.critico;
+  if (!f) return "";
+  const sinCal = c.calado == null;
+  if (!f.tend) return `<div class="tendencia"><div class="tend-tit">Tendencia próximas 3 h</div><p class="nota" style="margin:0">Sin tendencia: falta marea reciente o las componentes de marea de ${esc(f.frescas.map((e) => nom(e.id)).join(" y ") || "sus estaciones")}.</p></div>`;
+  const celda = (x, campo) => `<td class="${sinCal ? "" : CLASE[x.estado] ?? ""}"><span class="tv">${m2(x[campo])}</span></td>`;
+  const reales = f.estsTend.map((e) => `${nom(e.id)} ${hora(e.l.ts)}`).join(" y ");
+  const avisoTxt = c.aviso ? `<div class="tend-aviso">${ic("alerta")}<span>En ${c.aviso.h} h el tramo con menos agua pasa a ser <strong>${esc(c.aviso.t.nombre)}</strong>: ${m2(c.aviso.x.agua)} m${sinCal ? "" : ` · ${m2(c.aviso.x.quilla)} m bajo la quilla`}</span></div>` : "";
+  return `<div class="tendencia">
+    <div class="tend-tit">Tendencia próximas 3 h · ${esc(f.t.nombre)}</div>
+    <table class="tend-tabla"><tr><th></th><th>ahora</th>${f.tend.map((x) => `<th>en ${x.h} h<small>${hora(x.t)}</small></th>`).join("")}</tr>
+      <tr><th>agua</th><td class="${sinCal ? "" : CLASE[f.estado] ?? ""}"><span class="tv">${m2(f.agua)}</span></td>${f.tend.map((x) => celda(x, "agua")).join("")}</tr>
+      ${sinCal ? "" : `<tr><th>quilla</th><td class="${CLASE[f.estado] ?? ""}"><span class="tv">${m2(f.quilla)}</span></td>${f.tend.map((x) => celda(x, "quilla")).join("")}</tr>`}
+      <tr class="tend-flecha"><th></th><td></td>${f.tend.map((x) => `<td>${FLECHA[x.flecha]}</td>`).join("")}</tr></table>
+    ${avisoTxt}
+    <p class="nota">Del lado seguro: predicción menos el error medido (${ERROR_TENDENCIA.map((e) => m2(e)).join(" / ")} m). Predicción propia: marea astronómica de la CARP corregida con lo real de ${reales}${f.estsTend.length === 1 ? " (con una sola estación)" : ""}. No es oficial.</p>
+  </div>`;
 }
 
 const ultimoCambioCarp = (d) => (d?.tramos ?? []).map((t) => t.cambio_carp_en).filter(Boolean).sort().pop() ?? null;
@@ -235,7 +301,7 @@ const IC_NATURAL = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path
 function aguaSec(d, ix, aj) {
   const tramos = d.tramos ?? [];
   if (!tramos.length) return `<section class="tarjeta" id="sec-agua"><h2 class="titulo">Agua en el canal</h2><p class="nota" style="margin:0">Todavía no está la tabla de tramos de la CARP.</p></section>`;
-  const c = calcularAgua(tramos, ix, aj);
+  const c = tendenciaAgua(tramos, ix, aj, d.astro ?? astroDe(d.armonicos));
   const nom = (id) => NOM_CORTO[id] ?? id;
   const sinCal = c.calado == null;
 
@@ -279,6 +345,7 @@ function aguaSec(d, ix, aj) {
     <h2 class="titulo">Agua en el canal <span>${resumen}</span></h2>
     ${relevNuevo(d) ? `<div class="ya-lo-vi"><span class="nota" style="margin:0"><strong>La CARP publicó un relevamiento nuevo</strong> (${esc(relevs)}). La tabla ya está actualizada.</span><button type="button" class="primario" id="btn-relev-visto">Visto</button></div>` : ""}
     ${cab}
+    ${tendenciaHtml(c, nom)}
     ${sinCal ? `<button type="button" class="cargar-calado" data-abrir-ajustes="1">${ic("engranaje")}Cargá tu calado en el engranaje</button>` : ""}
     <div class="tramos">${filas}</div>
     ${sinCal ? "" : `<p class="nota">Rojo: quedan menos de ${m2(c.margen)} m bajo la quilla. Amarillo: entre ${m2(c.margen)} y ${m2(c.margen + c.colchon)} m. Verde: más de ${m2(c.margen + c.colchon)} m. Gris: sin marea reciente.</p>`}

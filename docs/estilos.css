@@ -250,3 +250,16 @@ body { margin: 0; background: var(--fondo); }
 .app[data-tema="noche"] .vis-amarillo { background: none; box-shadow: inset 0 0 0 1px var(--texto); }
 .app .corrida-ok { color: var(--texto); }
 .app .corrida-vieja { color: var(--suave); opacity: .75; font-style: italic; }
+
+/* Tendencia proximas 3 h */
+.app .tendencia { margin-top: 10px; border: 1px solid var(--borde); border-radius: 10px; padding: 10px 12px; }
+.app .tend-tit { font-size: .78rem; font-weight: 700; color: var(--suave); margin-bottom: 6px; }
+.app .tend-tabla { width: 100%; border-collapse: collapse; font-size: .9rem; table-layout: fixed; }
+.app .tend-tabla th { font-weight: 500; color: var(--suave); font-size: .75rem; text-align: right; padding: 3px 4px; }
+.app .tend-tabla th:first-child { text-align: left; width: 52px; }
+.app .tend-tabla th small { display: block; font-size: .68rem; }
+.app .tend-tabla td { text-align: right; padding: 3px 4px; font-weight: 700; color: var(--num, var(--texto)); }
+.app .tend-tabla td .tv { padding-right: 6px; border-right: 4px solid var(--franja, transparent); }
+.app .tend-flecha td { font-weight: 600; font-size: .78rem; color: var(--suave); }
+.app .tend-aviso { display: flex; gap: 8px; align-items: center; margin-top: 8px; font-size: .85rem; color: var(--l-amarillo); }
+.app .tend-aviso strong { color: var(--texto); }
