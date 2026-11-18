@@ -71,9 +71,11 @@ async function guardarPronuy(falla: boolean, antes: any) {
 // ---------- 3. Comparaciones ----------
 const serie = (filas: { t: string; v: number | string }[]): Punto[] => filas.map((f) => ({ t: Number(f.t), v: Number(f.v) }));
 async function resumen(desde: Date) {
-  const alt = async (est: string) => serie(await sql`select (extract(epoch from ts) * 1000)::bigint as t, altura_m as v from public.shn_alturas where estacion = ${est} and ts >= ${desde} order by ts`);
-  const carp = async (est: string) => serie(await sql`select (extract(epoch from ts) * 1000)::bigint as t, marea_m as v from public.lecturas where estacion = ${est} and marea_m is not null and ts >= ${desde} order by ts`);
-  const [shnNorden, shnSF, shnBA, carpNorden, carpColonia] = await Promise.all([alt("norden"), alt("san_fernando"), alt("buenos_aires"), carp("norden"), carp("colonia")]);
+  const alt = async (est: string, d = desde) => serie(await sql`select (extract(epoch from ts) * 1000)::bigint as t, altura_m as v from public.shn_alturas where estacion = ${est} and ts >= ${d} order by ts`);
+  const carp = async (est: string, d = desde) => serie(await sql`select (extract(epoch from ts) * 1000)::bigint as t, marea_m as v from public.lecturas where estacion = ${est} and marea_m is not null and ts >= ${d} order by ts`);
+  // El cero de Norden (A) mira tambien los 10 dias anteriores que guarda el SHN, para no perder saltos previos al inicio.
+  const desdeA = new Date(desde.getTime() - 10 * 864e5);
+  const [shnNorden, shnSF, shnBA, carpNorden, carpColonia] = await Promise.all([alt("norden", desdeA), alt("san_fernando"), alt("buenos_aires"), carp("norden", desdeA), carp("colonia")]);
   const filas = await sql`select p.lugar, p.estado, p.hora::text as hora, p.altura_m, p.emision::text as emision, p.dudosa from public.shn_pronostico p where p.hora >= ${desde}`;
   const ext = ultimaVersion(filas.map((f) => ({ lugar: f.lugar, estado: f.estado, hora: new Date(f.hora).toISOString(), altura_m: Number(f.altura_m), emision: new Date(f.emision).toISOString(), dudosa: f.dudosa })));
   const de = (l: string) => ext.filter((e) => e.lugar === l);
