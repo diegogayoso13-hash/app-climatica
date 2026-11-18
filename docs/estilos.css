@@ -353,3 +353,9 @@ body > #ajustes { display: none; } /* el formulario se muestra dentro de la pest
 .app button.info-b[aria-expanded="true"] { background: var(--suave); color: var(--tarjeta); }
 .app .info-t { display: block; margin-top: 6px; padding: 8px 10px; border-left: 3px solid var(--borde); color: var(--texto); font-size: .82rem; }
 .app .info-t[hidden] { display: none; }
+/* Aviso de responsabilidad (primera vez) */
+.app #aviso-inicial { max-width: 360px; }
+.app #aviso-inicial h2 { display: flex; gap: 8px; align-items: center; }
+.app #aviso-inicial h2 span { color: var(--l-amarillo); }
+.app #aviso-inicial p { margin: 0 0 10px; line-height: 1.45; }
+.app #aviso-inicial .botones button { width: 100%; min-height: 52px; font-size: 1rem; }

@@ -82,27 +82,53 @@ async function api(ruta) {
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json();
 }
+// Cada cuanto se baja cada grupo de datos. Las lecturas reales (marea y viento) se bajan en CADA actualizacion (2 min).
+// Lo que cambia despacio se baja menos seguido: asi cada actualizacion pesa mucho menos (plan gratis de Supabase).
+const CADA = { pronostico: 30 * 60e3, fijos: 6 * 3600e3, armonicos: 24 * 3600e3 };
+const SOLAPE_L24 = 30 * 60e3; // las ultimas 24 h se piden solo desde la ultima lectura guardada menos 30 min (el robot a veces completa una lectura despues)
+let piezasT = leerLocal("piezas_t") ?? {}; // hora en que se bajo cada grupo
 async function bajarTodo() {
-  const ahora = new Date().toISOString();
-  const hace7d = new Date(Date.now() - 7 * 864e5).toISOString();
-  const hace30d = new Date(Date.now() - 31 * 864e5).toISOString().slice(0, 10);
-  const [estaciones, ultimas, pronostico, alertas, fuentes, config, novedades, pdfs, l24, pron6, errores, tramos, vis, armonicos] = await Promise.all([
-    api("estaciones?select=*&order=orden"),
-    api("ultimas_lecturas?select=*&order=estacion,tipo,ts.desc"),
-    api("pronostico_actual?select=*&order=hora"),
-    api(`alertas_smn?select=*&toca_zona=is.true&hasta=gt.${encodeURIComponent(ahora)}&order=desde`),
-    api("estado_fuentes?select=*"),
-    api("configuracion?select=*"),
-    api(`novedades_canal?select=*&or=(normalizada_en.is.null,normalizada_en.gt.${encodeURIComponent(hace7d)})&order=km.asc.nullsfirst`),
-    api("sohma_pdfs?select=*&order=leido_en.desc&limit=1"),
-    api("lecturas_24h?select=estacion,ts,viento_kn,rafaga_kn,marea_m&order=ts"),
-    api("pronostico_6h_antes?select=*&order=hora"),
-    api(`error_modelos?select=*&anticipacion=eq.0-24&variable=eq.viento&dia=gte.${hace30d}`),
-    api("tramos_canal?select=*&order=orden"),
-    api("visibilidad_actual?select=modelo,corrida,hora,visibilidad_m&order=hora"),
-    api("armonicos?select=estacion,componente,velocidad_gh,coef_cos,coef_sin"),
-  ]);
-  return { estaciones, ultimas, pronostico, alertas, fuentes, config, novedades, pdfs, l24, pron6, errores, tramos, vis, armonicos };
+  const ahoraMs = Date.now(), ahora = new Date(ahoraMs).toISOString();
+  const hace7d = new Date(ahoraMs - 7 * 864e5).toISOString();
+  const hace30d = new Date(ahoraMs - 31 * 864e5).toISOString().slice(0, 10);
+  const previo = (ultimos && !sinSenal) ? ultimos : (leerLocal("ultimos_datos")?.d ?? null);
+  const toca = (k) => !previo || !piezasT[k] || ahoraMs - piezasT[k] > CADA[k] || ahoraMs < piezasT[k];
+  const pedidos = {
+    // siempre (cada 2 min)
+    ultimas: api("ultimas_lecturas?select=*&order=estacion,tipo,ts.desc"),
+    fuentes: api("estado_fuentes?select=*"),
+    alertas: api(`alertas_smn?select=*&toca_zona=is.true&hasta=gt.${encodeURIComponent(ahora)}&order=desde`),
+    novedades: api(`novedades_canal?select=*&or=(normalizada_en.is.null,normalizada_en.gt.${encodeURIComponent(hace7d)})&order=km.asc.nullsfirst`),
+    pdfs: api("sohma_pdfs?select=*&order=leido_en.desc&limit=1"),
+  };
+  // ultimas 24 h: solo lo nuevo (si ya hay algo guardado de las ultimas 3 h)
+  const l24prev = previo?.l24 ?? [], ultTs = l24prev.length ? Math.max(...l24prev.map((l) => Date.parse(l.ts))) : 0;
+  const incremental = ultTs > ahoraMs - 3 * 3600e3;
+  pedidos.l24 = api(`lecturas_24h?select=estacion,ts,viento_kn,rafaga_kn,marea_m&order=ts${incremental ? `&ts=gt.${encodeURIComponent(new Date(ultTs - SOLAPE_L24).toISOString())}` : ""}`);
+  if (toca("pronostico")) Object.assign(pedidos, {
+    pronostico: api("pronostico_actual?select=*&order=hora"),
+    pron6: api("pronostico_6h_antes?select=*&order=hora"),
+    errores: api(`error_modelos?select=*&anticipacion=eq.0-24&variable=eq.viento&dia=gte.${hace30d}`),
+    vis: api("visibilidad_actual?select=modelo,corrida,hora,visibilidad_m&order=hora"),
+  });
+  if (toca("fijos")) Object.assign(pedidos, {
+    estaciones: api("estaciones?select=*&order=orden"), config: api("configuracion?select=*"), tramos: api("tramos_canal?select=*&order=orden"),
+  });
+  if (toca("armonicos")) pedidos.armonicos = api("armonicos?select=estacion,componente,velocidad_gh,coef_cos,coef_sin");
+  const claves = Object.keys(pedidos), res = await Promise.all(Object.values(pedidos));
+  const nuevo = Object.fromEntries(claves.map((k, i) => [k, res[i]]));
+  for (const k of Object.keys(CADA)) if (k === "armonicos" ? "armonicos" in nuevo : k === "fijos" ? "tramos" in nuevo : "pronostico" in nuevo) piezasT[k] = ahoraMs;
+  guardarLocal("piezas_t", piezasT);
+  // Juntar las 24 h: lo guardado + lo nuevo (lo nuevo pisa la misma lectura), y solo las ultimas 24 h.
+  let l24 = nuevo.l24;
+  if (incremental) {
+    const m = new Map(l24prev.map((l) => [l.estacion + "|" + l.ts, l]));
+    for (const l of nuevo.l24) m.set(l.estacion + "|" + l.ts, l);
+    l24 = [...m.values()].filter((l) => Date.parse(l.ts) > ahoraMs - 864e5).sort((x, y) => x.ts.localeCompare(y.ts));
+  }
+  const d = { ...(previo ?? {}), ...nuevo, l24 };
+  delete d.astro;
+  return d;
 }
 function indexar(ultimas) {
   const ix = {};
@@ -571,7 +597,7 @@ function canal(d, cd) {
     <span class="etq ${esNorm ? "e-verde" : colorEstado(n.estado)}">${esNorm ? "NORMALIZADA" : esc(n.estado)}</span></summary>
     <div class="detalle">${esc(tramoLindo(n.tramo))} · ${esNorm ? `normalizada ${fechaHora(n.normalizada_en)}` : `visto desde ${fechaHora(n.primera_vez)}`}${n.texto ? `<br>${esc(n.texto)}` : ""}
     <div class="nota-mia">${misNotas[n.clave]
-      ? `<strong>Tu nota</strong> (${fechaHora(misNotas[n.clave].fecha)}, no oficial): ${esc(misNotas[n.clave].texto)} <button type="button" class="btn-nota" data-nota="${esc(n.clave)}">${ic("lapiz")}editar</button>`
+      ? `<strong>Tu nota</strong> · solo en este celular · ${fechaHora(misNotas[n.clave].fecha)}: ${esc(misNotas[n.clave].texto)} <button type="button" class="btn-nota" data-nota="${esc(n.clave)}">${ic("lapiz")}editar</button>`
       : `<button type="button" class="btn-nota" data-nota="${esc(n.clave)}">${ic("lapiz")}agregar nota</button>`}</div></div></details>`;
 
   const cuerpo = `${cd.nuevas.size ? `<div class="ya-lo-vi"><span class="nota" style="margin:0">Hay ${cd.nuevas.size} novedad${cd.nuevas.size > 1 ? "es" : ""} desde tu última visita (marcadas NUEVO).</span><button type="button" class="primario" id="btn-visto">Ya lo vi</button></div>` : ""}
@@ -655,7 +681,8 @@ function robot(d) {
 
 function fuentesSec() {
   return plegable("sec-fuentes", "Fuentes y aclaraciones", "LIMB, cálculos, fuentes",
-    Object.values(INFO).map(([t, f]) => `<h3 class="sub">${esc(t)}</h3><p class="nota" style="margin-top:0">${esc(f())}</p>`).join(""));
+    Object.values(INFO).map(([t, f]) => `<h3 class="sub">${esc(t)}</h3><p class="nota" style="margin-top:0">${esc(f())}</p>`).join("") +
+    `<h3 class="sub">Aviso de uso</h3><p class="nota" style="margin-top:0">${avisoAceptado() ? `Aceptado el ${fechaHora(avisoAceptado().fecha)}` : "Todavía no aceptado"}: es una ayuda, no reemplaza al práctico ni a la información oficial. El agua por tramo es una estimación.</p>`);
 }
 const malFuente = (x) => x.detalle?.terminado ? false : (x.ultimo_error && (!x.ultimo_ok || x.ultimo_error > x.ultimo_ok)) || !x.ultimo_ok || minDesde(x.ultimo_ok) > (PLAZO_FUENTE[x.fuente] ?? VIEJO_MIN);
 
@@ -728,7 +755,7 @@ raiz.addEventListener("click", (ev) => {
   }
   if (b.dataset.nota) {
     const senal = b.dataset.nota, todas = notas();
-    const texto = prompt(`Tu nota para la señal Nº ${senal} (no oficial, queda en este celular).\nDejala vacía para borrarla.`, todas[senal]?.texto ?? "");
+    const texto = prompt(`Nota para la señal Nº ${senal}\nSolo la ves vos, en este celular. No es oficial y tus compañeros no la ven.\nDejala vacía para borrarla.`, todas[senal]?.texto ?? "");
     if (texto === null) return;
     if (texto.trim()) todas[senal] = { texto: texto.trim(), fecha: new Date().toISOString() }; else delete todas[senal];
     guardarLocal("notas_senal", todas);
@@ -792,9 +819,22 @@ function colorBarraCelular() {
   document.querySelectorAll('meta[name="theme-color"]').forEach((m) => { m.dataset.normal ??= m.content; m.content = noche ? "#000000" : m.dataset.normal; });
 }
 
+// ---------- aviso de responsabilidad (primera vez) ----------
+const AVISO_VERSION = 1; // si se cambia el texto del aviso, subir este numero: todos lo vuelven a ver y aceptar
+const avisoDlg = document.getElementById("aviso-inicial");
+const avisoAceptado = () => { const a = leerLocal("aviso_aceptado"); return a && a.v === AVISO_VERSION ? a : null; };
+function mostrarAvisoSiHaceFalta() { if (!avisoAceptado() && !avisoDlg.open) avisoDlg.showModal(); }
+avisoDlg.addEventListener("cancel", (ev) => ev.preventDefault()); // no se cierra con "atras" ni tocando afuera: hay que aceptar
+document.getElementById("btn-aviso-ok").addEventListener("click", () => {
+  guardarLocal("aviso_aceptado", { v: AVISO_VERSION, fecha: new Date().toISOString() });
+  avisoDlg.close();
+  if (ultimos) render(ultimos);
+});
+
 // ---------- arranque ----------
 colorBarraCelular();
 if (!window.MODO_PRUEBA) { // la pagina de pruebas (solo en la compu) usa las funciones sin bajar datos
+  mostrarAvisoSiHaceFalta();
   const cache = leerLocal("ultimos_datos");
   if (cache) render(cache.d);
   actualizar();
