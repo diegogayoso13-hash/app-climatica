@@ -205,3 +205,35 @@ body { margin: 0; background: var(--fondo); }
 .app .btn-icono { width: 48px; min-height: 48px; padding: 0; border: 0; background: none; color: var(--texto); display: grid; place-items: center; border-radius: 12px; }
 .app .btn-icono svg { width: 24px; height: 24px; }
 .app .btn-icono:active { background: var(--tarjeta); }
+
+/* Agua en el canal */
+.app .critico { display: flex; gap: 8px; align-items: center; position: relative; border: 1px solid var(--borde); border-radius: 10px; padding: 10px 12px 10px 16px; font-size: .95rem; overflow: hidden; }
+.app .critico::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 5px; background: var(--franja, var(--borde)); }
+.app .critico strong { color: var(--num, var(--texto)); }
+.app .critico small { color: var(--suave); }
+.app .critico svg { color: var(--l-amarillo); }
+.app .cargar-calado { margin-top: 10px; width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--acento); border-style: dashed; }
+.app .tramos { margin-top: 10px; }
+.app .tramo { position: relative; display: grid; grid-template-columns: 1fr 64px 72px; gap: 8px; align-items: center; padding: 10px 0 10px 12px; border-top: 1px solid var(--borde); }
+.app .tramo:first-child { border-top: 0; }
+.app .tramo::before { content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 4px; border-radius: 2px; background: var(--franja, transparent); }
+.app .tramo.gris::before { background: var(--borde); }
+.app .tramo .tr-nom { font-weight: 600; min-width: 0; }
+.app .tramo .tr-nom small { display: block; font-weight: 400; color: var(--suave); font-size: .75rem; }
+.app .tramo .tr-nom small.una { color: var(--l-amarillo); font-weight: 600; }
+.app .tramo .marcas { display: flex; flex-wrap: wrap; gap: 4px 10px; }
+.app .tramo .marca-t { display: inline-flex; align-items: center; gap: 3px; }
+.app .tramo .marca-t svg { width: 15px; height: 15px; }
+.app .tramo .tr-val { text-align: right; }
+.app .tramo .tr-val small { display: block; color: var(--suave); font-size: .7rem; }
+.app .tramo .tr-agua { font-weight: 700; font-size: 1.05rem; }
+.app .tramo .tr-quilla { font-weight: 700; font-size: 1.05rem; color: var(--num, var(--texto)); }
+.app .tramo .u { font-size: .75rem; font-weight: 500; color: var(--suave); margin-left: 2px; }
+.app .tramo.gris .tr-agua, .app .tramo.gris .tr-quilla { color: var(--suave); }
+.app .tramo.es-critico .tr-n { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 3px; }
+.app .tramo:not(:has(.tr-val + .tr-val)) { grid-template-columns: 1fr 72px; }
+.app .leyenda-agua { border-top: 1px solid var(--borde); padding-top: 8px; }
+.app .par { display: flex; gap: 6px; }
+.app select { font: 1rem Roboto, system-ui, sans-serif; min-height: 44px; padding: 0 6px; border-radius: 8px; border: 1px solid var(--borde); background: var(--fondo); color: var(--texto); }
+.app .error-form { color: var(--l-rojo); font-weight: 600; }
+.app[data-tema="noche"] .tramo .tr-nom small.una { color: var(--texto); }

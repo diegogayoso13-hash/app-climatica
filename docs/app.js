@@ -83,7 +83,7 @@ async function bajarTodo() {
   const ahora = new Date().toISOString();
   const hace7d = new Date(Date.now() - 7 * 864e5).toISOString();
   const hace30d = new Date(Date.now() - 31 * 864e5).toISOString().slice(0, 10);
-  const [estaciones, ultimas, pronostico, alertas, fuentes, config, novedades, pdfs, l24, pron6, errores] = await Promise.all([
+  const [estaciones, ultimas, pronostico, alertas, fuentes, config, novedades, pdfs, l24, pron6, errores, tramos] = await Promise.all([
     api("estaciones?select=*&order=orden"),
     api("ultimas_lecturas?select=*&order=estacion,tipo,ts.desc"),
     api("pronostico_actual?select=*&order=hora"),
@@ -95,8 +95,9 @@ async function bajarTodo() {
     api("lecturas_24h?select=estacion,ts,viento_kn,rafaga_kn,marea_m&order=ts"),
     api("pronostico_6h_antes?select=*&order=hora"),
     api(`error_modelos?select=*&anticipacion=eq.0-24&variable=eq.viento&dia=gte.${hace30d}`),
+    api("tramos_canal?select=*&order=orden"),
   ]);
-  return { estaciones, ultimas, pronostico, alertas, fuentes, config, novedades, pdfs, l24, pron6, errores };
+  return { estaciones, ultimas, pronostico, alertas, fuentes, config, novedades, pdfs, l24, pron6, errores, tramos };
 }
 function indexar(ultimas) {
   const ix = {};
@@ -138,6 +139,7 @@ function barra(d, cd) {
   if (al.length) carteles.push(`<button type="button" class="cartel rojo" data-ir="sec-alertas">${ic("alerta")}<span>${al.length === 1 ? "Alerta SMN vigente" : `${al.length} alertas SMN vigentes`}: ${esc([...new Set(al.map((a) => a.evento))].join(", "))}</span><span class="ir">${ic("chev")}</span></button>`);
   const n = cd.nuevas.size;
   if (n) carteles.push(`<button type="button" class="cartel azul" data-ir="sec-canal">${ic("campana")}<span>${n} novedad${n > 1 ? "es" : ""} del canal</span><span class="ir">${ic("chev")}</span></button>`);
+  if (relevNuevo(d)) carteles.push(`<button type="button" class="cartel azul" data-ir="sec-agua">${ic("campana")}<span>La CARP publicó un relevamiento nuevo</span><span class="ir">${ic("chev")}</span></button>`);
   return `<header class="barra"><div class="barra-fila"><div class="marca">${ic("faro")}Tu Faro</div><span class="act">${sinSenal ? "Sin señal" : `Act. ${hora(Date.now())}`}</span><button type="button" class="btn-icono" id="btn-ajustes" aria-label="Ajustes" title="Ajustes">${ic("engranaje")}</button></div>${carteles.join("")}</header>`;
 }
 
@@ -177,6 +179,108 @@ function norden(ix, pron6) {
       <div class="dato ancho ${esViejo(m?.ts) ? "" : limR(m?.marea_m)}"><div><div class="et">Altura del río (LIMB)</div><div class="val">${m2(m?.marea_m)}<span class="u">m</span>${tend(m?.marea_m, mA?.marea_m, 0.005)}</div></div>
       <div class="hora-dato">${m ? `${hora(m.ts)}<br>${hace(m.ts)}` : "sin dato"}</div></div>
     </div>
+  </section>`;
+}
+
+// ---------- agua en el canal ----------
+// Agua disponible = profundidad del tramo (CARP, cero LIMB) + marea del tramo.
+// Marea del tramo = la MAS BAJA de sus dos estaciones con dato nuevo: si erramos, que muestre menos agua.
+const MARGEN_MIN = 0.60;  // REMAGA 2019, art. 2.9: no se puede bajar
+const PIE = 0.3048;
+const AGUA_DEFECTO = { calado: null, unidad: "m", margen: MARGEN_MIN, colchon: 0.30 };
+let aguaAj = { ...AGUA_DEFECTO, ...(leerLocal("agua_canal") ?? {}) };
+const caladoM = (aj) => aj.calado == null ? null : aj.unidad === "ft" ? aj.calado * PIE : aj.calado;
+const cm = (x) => Math.round(x * 100) / 100; // se compara al centimetro, sin errores de coma flotante
+const NOM_CORTO = { norden: "Norden", colonia: "Colonia", conchillas: "Conchillas", carmelo: "Carmelo" };
+const kmTxt = (x) => Number(x).toLocaleString("es-UY", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+
+// Revisa lo que se carga en el engranaje. Devuelve { error } o { valores }.
+function revisarAgua({ calado, unidad, margen, colchon }) {
+  const num = (x) => x === "" || x == null ? null : Number(String(x).replace(",", "."));
+  const c = num(calado), m = num(margen), k = num(colchon);
+  if (c != null && !(c > 0 && c < (unidad === "ft" ? 66 : 20))) return { error: "El calado no parece válido." };
+  if (m != null && !(m >= MARGEN_MIN)) return { error: `El margen bajo la quilla no puede ser menor que ${m2(MARGEN_MIN)} m (REMAGA 2019, art. 2.9).` };
+  if (k != null && !(k >= 0)) return { error: "El colchón amarillo no puede ser negativo." };
+  return { valores: { calado: c, unidad: unidad === "ft" ? "ft" : "m", margen: m ?? AGUA_DEFECTO.margen, colchon: k ?? AGUA_DEFECTO.colchon } };
+}
+
+function calcularAgua(tramos, ix, aj) {
+  const calado = caladoM(aj), margen = Math.max(MARGEN_MIN, aj.margen ?? MARGEN_MIN), colchon = Math.max(0, aj.colchon ?? AGUA_DEFECTO.colchon);
+  const filas = tramos.map((t) => {
+    const ests = [t.estacion_1, t.estacion_2].map((id) => ({ id, l: (ix[id]?.marea ?? [])[0] }));
+    const frescas = ests.filter((e) => e.l && e.l.marea_m != null && !esViejo(e.l.ts));
+    const r = { t, ests, frescas, estado: "gris", agua: null, quilla: null, usada: null };
+    if (!frescas.length) return r; // sin marea reciente: gris, NUNCA verde
+    r.usada = frescas.reduce((a, e) => e.l.marea_m < a.l.marea_m ? e : a);
+    r.agua = cm(Number(t.profundidad_m) + r.usada.l.marea_m);
+    if (calado == null) { r.estado = "sin-calado"; return r; }
+    r.quilla = cm(r.agua - calado);
+    r.estado = r.quilla < cm(margen) ? "rojo" : r.quilla < cm(margen + colchon) ? "amarillo" : "verde";
+    return r;
+  });
+  const conDato = filas.filter((f) => f.agua != null);
+  const critico = conDato.reduce((a, f) => !a || (calado == null ? f.agua < a.agua : f.quilla < a.quilla) ? f : a, null);
+  return { filas, critico, calado, margen, colchon, sinMarea: filas.length - conDato.length };
+}
+
+const ultimoCambioCarp = (d) => (d?.tramos ?? []).map((t) => t.cambio_carp_en).filter(Boolean).sort().pop() ?? null;
+const relevNuevo = (d) => { const u = ultimoCambioCarp(d); return u && leerLocal("relevamiento_visto") !== u; };
+const CLASE = { rojo: "lim-rojo", amarillo: "lim-amarillo", verde: "lim-verde" };
+const IC_ROCA = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 19l4.5-8 3.5 3 3.5-6.5L21 19z"/></svg>';
+const IC_NATURAL = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10c2-2 4-2 6 0s4 2 6 0 4-2 6 0M3 15c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/></svg>';
+
+function aguaSec(d, ix, aj) {
+  const tramos = d.tramos ?? [];
+  if (!tramos.length) return `<section class="tarjeta" id="sec-agua"><h2 class="titulo">Agua en el canal</h2><p class="nota" style="margin:0">Todavía no está la tabla de tramos de la CARP.</p></section>`;
+  const c = calcularAgua(tramos, ix, aj);
+  const nom = (id) => NOM_CORTO[id] ?? id;
+  const sinCal = c.calado == null;
+
+  let cab;
+  if (!c.critico) cab = `<div class="critico">${ic("alerta")}<span>Sin marea reciente en ninguna estación: no se puede calcular el agua.</span></div>`;
+  else {
+    const f = c.critico;
+    const quilla = sinCal ? "" : f.quilla < 0 ? ` · <strong>el calado supera el agua por ${m2(-f.quilla)} m</strong>` : ` · quedan ${m2(f.quilla)} m bajo la quilla`;
+    cab = `<div class="critico ${sinCal ? "" : CLASE[f.estado]}"><span>Tramo crítico: <strong>${esc(f.t.nombre)}</strong> · ${m2(f.agua)} m de agua${quilla}${c.sinMarea ? ` <small>(${c.sinMarea} tramo${c.sinMarea > 1 ? "s" : ""} sin marea)</small>` : ""}</span></div>`;
+  }
+
+  const filas = c.filas.map((f) => {
+    const t = f.t, gris = f.estado === "gris";
+    const iconos = [t.tiene_roca ? `<span class="marca-t">${IC_ROCA}roca km ${esc(t.roca_km)}</span>` : "",
+      t.prof_natural ? `<span class="marca-t">${IC_NATURAL}prof. natural${Number(t.natural_desde_km) > Number(t.km_desde) ? ` desde km ${kmTxt(t.natural_desde_km)}` : ""}</span>` : ""].join("");
+    let est;
+    if (gris) est = `${nom(t.estacion_1)} y ${nom(t.estacion_2)} sin dato nuevo de marea`;
+    else if (f.frescas.length === 1) {
+      const otra = f.ests.find((e) => e.id !== f.usada.id);
+      est = `con una sola estación: ${nom(f.usada.id)} ${m2(f.usada.l.marea_m)} m (${nom(otra.id)} sin dato nuevo)`;
+    } else {
+      const otra = f.frescas.find((e) => e !== f.usada);
+      est = `marea ${nom(f.usada.id)} ${m2(f.usada.l.marea_m)} m (la más baja; ${nom(otra.id)} ${m2(otra.l.marea_m)})`;
+    }
+    return `<div class="tramo ${CLASE[f.estado] ?? ""} ${gris ? "gris" : ""} ${f === c.critico ? "es-critico" : ""}">
+      <div class="tr-nom"><span class="tr-n">${esc(t.nombre)}</span><small>km ${kmTxt(t.km_desde)}–${kmTxt(t.km_hasta)} · prof. ${m2(Number(t.profundidad_m))} m</small>${iconos ? `<small class="marcas">${iconos}</small>` : ""}<small class="${f.frescas.length === 1 ? "una" : ""}">${est}</small></div>
+      <div class="tr-val"><span class="tr-agua">${gris ? "–" : m2(f.agua)}<span class="u">m</span></span><small>agua</small></div>
+      ${sinCal ? "" : `<div class="tr-val"><span class="tr-quilla">${gris ? "–" : m2(f.quilla)}<span class="u">m</span></span><small>${gris ? "sin marea" : "bajo quilla"}</small></div>`}
+    </div>`;
+  }).join("");
+
+  // Hora de cada marea usada (solo las que tienen dato nuevo).
+  const usadas = [...new Set(tramos.flatMap((t) => [t.estacion_1, t.estacion_2]))].map((id) => {
+    const l = (ix[id]?.marea ?? [])[0];
+    return `${nom(id)} ${l ? `${hora(l.ts)}${esViejo(l.ts) ? " (vieja, no se usa)" : ""}` : "sin dato"}`;
+  }).join(" · ");
+  const relevs = [...new Set(tramos.map((t) => t.relevamiento))].join(", ");
+  const resumen = sinCal ? "sin calado" : `calado ${m2(c.calado)} m${aj.unidad === "ft" ? ` (${n1(aj.calado)} ft)` : ""} · margen ${m2(c.margen)}`;
+
+  return `<section class="tarjeta" id="sec-agua">
+    <h2 class="titulo">Agua en el canal <span>${resumen}</span></h2>
+    ${relevNuevo(d) ? `<div class="ya-lo-vi"><span class="nota" style="margin:0"><strong>La CARP publicó un relevamiento nuevo</strong> (${esc(relevs)}). La tabla ya está actualizada.</span><button type="button" class="primario" id="btn-relev-visto">Visto</button></div>` : ""}
+    ${cab}
+    ${sinCal ? `<button type="button" class="cargar-calado" data-abrir-ajustes="1">${ic("engranaje")}Cargá tu calado en el engranaje</button>` : ""}
+    <div class="tramos">${filas}</div>
+    ${sinCal ? "" : `<p class="nota">Rojo: quedan menos de ${m2(c.margen)} m bajo la quilla. Amarillo: entre ${m2(c.margen)} y ${m2(c.margen + c.colchon)} m. Verde: más de ${m2(c.margen + c.colchon)} m. Gris: sin marea reciente.</p>`}
+    <p class="nota">Relevamiento CARP: <strong>${esc(relevs)}</strong> (cero LIMB) · Marea usada: ${usadas}</p>
+    <p class="nota leyenda-agua">Referencia, no reemplaza al práctico ni a la información oficial. Calcula con el calado del buque detenido: navegando, el buque se hunde un poco más (squat).</p>
   </section>`;
 }
 
@@ -378,10 +482,12 @@ function realVsPron(d) {
     <h3 class="sub">¿Qué modelo acierta más en Norden?</h3>${ranking}`);
 }
 
-const NOMBRE_FUENTE = { carp: "CARP (4 estaciones)", armada_colonia: "Armada Colonia", open_meteo: "Open-Meteo", smn_alertas: "Alertas SMN", sohma: "Avisos SOHMA (cada hora)" };
+const NOMBRE_FUENTE = { carp: "CARP (4 estaciones)", armada_colonia: "Armada Colonia", open_meteo: "Open-Meteo", smn_alertas: "Alertas SMN", sohma: "Avisos SOHMA (cada hora)", carp_tramos: "Tabla de tramos CARP (lunes 9 h)" };
+// Cuanto puede pasar sin lectura buena antes de marcar problema (minutos).
+const PLAZO_FUENTE = { sohma: 90, carp_tramos: 8 * 24 * 60 };
 function robot(d) {
   const f = d.fuentes ?? [];
-  const mal = (x) => (x.ultimo_error && (!x.ultimo_ok || x.ultimo_error > x.ultimo_ok)) || !x.ultimo_ok || minDesde(x.ultimo_ok) > (x.fuente === "sohma" ? 90 : VIEJO_MIN);
+  const mal = (x) => (x.ultimo_error && (!x.ultimo_ok || x.ultimo_error > x.ultimo_ok)) || !x.ultimo_ok || minDesde(x.ultimo_ok) > (PLAZO_FUENTE[x.fuente] ?? VIEJO_MIN);
   const malas = f.filter(mal).length;
   return plegable("sec-robot", "Estado del robot", malas ? `${malas} con problemas` : "todo en orden",
     `<ul class="fuentes">${f.map((x) => `<li><span class="${mal(x) ? "mal" : "ok"}">${ic(mal(x) ? "alerta" : "ok")}</span><span>${esc(NOMBRE_FUENTE[x.fuente] ?? x.fuente)}: ${x.ultimo_ok ? `leída ${hora(x.ultimo_ok)}` : "nunca"}${x.ultimo_error && (!x.ultimo_ok || x.ultimo_error > x.ultimo_ok) ? ` — error: ${esc(x.mensaje_error)}` : ""}</span></li>`).join("")}</ul>`);
@@ -397,7 +503,7 @@ function render(d) {
   const nombre = Object.fromEntries((d.estaciones ?? []).map((e) => [e.id, e.nombre]));
   const cd = canalDatos(d);
   raiz.innerHTML = barra(d, cd) + `<main>
-    ${norden(ix, d.pron6 ?? [])}${pronostico(d.pronostico ?? [], d.config)}${marea(d.l24 ?? [])}${otras(ix, nombre)}
+    ${norden(ix, d.pron6 ?? [])}${aguaSec(d, ix, aguaAj)}${pronostico(d.pronostico ?? [], d.config)}${marea(d.l24 ?? [])}${otras(ix, nombre)}
     ${canal(d, cd)}${alertasSec(d)}${realVsPron(d)}${robot(d)}</main>
     <footer><div><p>Esta app es una ayuda. No reemplaza la consulta de las fuentes oficiales para tomar decisiones de seguridad.</p>
     <p>Fuentes: CARP, Armada Nacional (SOHMA), Open-Meteo, SMN. Hora de Uruguay (UTC-3). Viento en nudos, marea en metros (LIMB).</p></div></footer>`;
@@ -420,7 +526,8 @@ raiz.addEventListener("click", (ev) => {
   if (!b) return;
   if (b.dataset.marea) { mareaExtra = mareaExtra === b.dataset.marea ? null : b.dataset.marea; guardarLocal("marea_extra", mareaExtra); render(ultimos); return; }
   if (b.dataset.ir) { const s = document.getElementById(b.dataset.ir); if (s) { s.open = true; s.scrollIntoView({ behavior: "smooth", block: "start" }); } return; }
-  if (b.id === "btn-ajustes") { abrirAjustes(); return; }
+  if (b.id === "btn-ajustes" || b.dataset.abrirAjustes) { abrirAjustes(); return; }
+  if (b.id === "btn-relev-visto") { guardarLocal("relevamiento_visto", ultimoCambioCarp(ultimos)); render(ultimos); return; }
   if (b.id === "btn-visto") {
     const cd = canalDatos(ultimos), s = vistas();
     for (const n of [...cd.radio, ...cd.balizas, ...cd.normalizadas]) s.add(claveVista(n));
@@ -455,8 +562,26 @@ async function actualizar() {
 // ---------- ajustes ----------
 const dlg = document.getElementById("ajustes"), form = document.getElementById("form-ajustes");
 const llenarForm = (v) => { for (const [k, x] of Object.entries(v)) if (form.elements[k]) form.elements[k].value = x ?? ""; };
-function abrirAjustes() { llenarForm(lim); form.elements.noche.checked = document.documentElement.dataset.tema === "noche"; dlg.showModal(); }
-document.getElementById("btn-defecto").onclick = () => llenarForm(DEFECTO);
+const errorAgua = document.getElementById("error-agua");
+function abrirAjustes() {
+  llenarForm(lim); llenarForm(aguaAj); errorAgua.hidden = true;
+  form.elements.noche.checked = document.documentElement.dataset.tema === "noche"; dlg.showModal();
+}
+document.getElementById("btn-defecto").onclick = () => { llenarForm(DEFECTO); llenarForm({ margen: AGUA_DEFECTO.margen, colchon: AGUA_DEFECTO.colchon }); };
+// Al cambiar metros/pies, se pasa el calado cargado a la otra unidad.
+form.elements.unidad.addEventListener("change", (ev) => {
+  const x = form.elements.calado.value.trim();
+  if (x !== "") form.elements.calado.value = String(Math.round((ev.target.value === "ft" ? Number(x) / PIE : Number(x) * PIE) * 100) / 100);
+});
+// Margen menor que 0,60 (u otro valor que no va): no deja guardar.
+form.addEventListener("submit", (ev) => {
+  if (ev.submitter?.value !== "guardar") return;
+  const r = revisarAgua({ calado: form.elements.calado.value.trim(), unidad: form.elements.unidad.value, margen: form.elements.margen.value.trim(), colchon: form.elements.colchon.value.trim() });
+  errorAgua.hidden = !r.error; errorAgua.textContent = r.error ?? "";
+  if (r.error) { ev.preventDefault(); errorAgua.scrollIntoView({ block: "nearest" }); return; }
+  aguaAj = r.valores;
+  guardarLocal("agua_canal", aguaAj);
+});
 dlg.addEventListener("close", () => {
   if (dlg.returnValue !== "guardar") return;
   const nuevo = {};
@@ -478,9 +603,11 @@ function colorBarraCelular() {
 
 // ---------- arranque ----------
 colorBarraCelular();
-const cache = leerLocal("ultimos_datos");
-if (cache) render(cache.d);
-actualizar();
-setInterval(() => { if (document.visibilityState === "visible") actualizar(); }, REFRESCO_MS);
-document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") actualizar(); });
-if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+if (!window.MODO_PRUEBA) { // la pagina de pruebas (solo en la compu) usa las funciones sin bajar datos
+  const cache = leerLocal("ultimos_datos");
+  if (cache) render(cache.d);
+  actualizar();
+  setInterval(() => { if (document.visibilityState === "visible") actualizar(); }, REFRESCO_MS);
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") actualizar(); });
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+}
