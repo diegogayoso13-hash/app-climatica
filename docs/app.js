@@ -83,7 +83,7 @@ async function bajarTodo() {
   const ahora = new Date().toISOString();
   const hace7d = new Date(Date.now() - 7 * 864e5).toISOString();
   const hace30d = new Date(Date.now() - 31 * 864e5).toISOString().slice(0, 10);
-  const [estaciones, ultimas, pronostico, alertas, fuentes, config, novedades, pdfs, l24, pron6, errores, tramos] = await Promise.all([
+  const [estaciones, ultimas, pronostico, alertas, fuentes, config, novedades, pdfs, l24, pron6, errores, tramos, vis] = await Promise.all([
     api("estaciones?select=*&order=orden"),
     api("ultimas_lecturas?select=*&order=estacion,tipo,ts.desc"),
     api("pronostico_actual?select=*&order=hora"),
@@ -96,8 +96,9 @@ async function bajarTodo() {
     api("pronostico_6h_antes?select=*&order=hora"),
     api(`error_modelos?select=*&anticipacion=eq.0-24&variable=eq.viento&dia=gte.${hace30d}`),
     api("tramos_canal?select=*&order=orden"),
+    api("visibilidad_actual?select=modelo,corrida,hora,visibilidad_m&order=hora"),
   ]);
-  return { estaciones, ultimas, pronostico, alertas, fuentes, config, novedades, pdfs, l24, pron6, errores, tramos };
+  return { estaciones, ultimas, pronostico, alertas, fuentes, config, novedades, pdfs, l24, pron6, errores, tramos, vis };
 }
 function indexar(ultimas) {
   const ix = {};
@@ -139,6 +140,8 @@ function barra(d, cd) {
   if (al.length) carteles.push(`<button type="button" class="cartel rojo" data-ir="sec-alertas">${ic("alerta")}<span>${al.length === 1 ? "Alerta SMN vigente" : `${al.length} alertas SMN vigentes`}: ${esc([...new Set(al.map((a) => a.evento))].join(", "))}</span><span class="ir">${ic("chev")}</span></button>`);
   const n = cd.nuevas.size;
   if (n) carteles.push(`<button type="button" class="cartel azul" data-ir="sec-canal">${ic("campana")}<span>${n} novedad${n > 1 ? "es" : ""} del canal</span><span class="ir">${ic("chev")}</span></button>`);
+  const niebla = nieblaProxima(d.vis);
+  if (niebla) carteles.push(`<button type="button" class="cartel rojo" data-ir="sec-pron">${ic("alerta")}<span>Niebla prevista: menos de ${(VIS_ROJO / 1000).toLocaleString("es-UY")} km desde las ${hora(niebla)}</span><span class="ir">${ic("chev")}</span></button>`);
   if (relevNuevo(d)) carteles.push(`<button type="button" class="cartel azul" data-ir="sec-agua">${ic("campana")}<span>La CARP publicó un relevamiento nuevo</span><span class="ir">${ic("chev")}</span></button>`);
   return `<header class="barra"><div class="barra-fila"><div class="marca">${ic("faro")}Tu Faro</div><span class="act">${sinSenal ? "Sin señal" : `Act. ${hora(Date.now())}`}</span><button type="button" class="btn-icono" id="btn-ajustes" aria-label="Ajustes" title="Ajustes">${ic("engranaje")}</button></div>${carteles.join("")}</header>`;
 }
@@ -284,15 +287,42 @@ function aguaSec(d, ix, aj) {
   </section>`;
 }
 
+// ---------- visibilidad pronosticada (Open-Meteo: ECMWF 9 km y GFS) ----------
+// Limites del REMAGA 2019. Para cambiarlos, tocar solo estos dos numeros (en metros).
+const VIS_ROJO = 1000;     // art. 2.7.3: minimo para iniciar la navegacion
+const VIS_AMARILLO = 8000; // Tabla II: limite para buques grandes
+const claseVis = (m) => m == null ? "" : m < VIS_ROJO ? "vis-rojo" : m < VIS_AMARILLO ? "vis-amarillo" : "";
+const fmtVis = (m) => m == null ? "s/d" : m < 1000 ? `${Math.round(m / 10) * 10} m`
+  : m < 10000 ? (Math.floor(m / 100) / 10).toLocaleString("es-UY") : String(Math.floor(m / 1000));
+const chipVis = (m) => `<span class="vis ${claseVis(m)}">${fmtVis(m)}</span>`;
+// Por hora, el valor MAS BAJO de los modelos que tengan dato (errar del lado seguro).
+function visMapa(filas) {
+  const m = new Map();
+  for (const f of filas ?? []) {
+    if (f.visibilidad_m == null) continue;
+    const t = new Date(f.hora).getTime(), a = m.get(t);
+    m.set(t, a == null ? f.visibilidad_m : Math.min(a, f.visibilidad_m));
+  }
+  return m;
+}
+// Primera hora con menos de VIS_ROJO en las proximas 12 h (para el cartel de arriba).
+function nieblaProxima(filas) {
+  const ahora = Date.now();
+  return [...visMapa(filas).entries()].filter(([t, v]) => t >= ahora - 30 * 60000 && t <= ahora + 12 * 3600e3 && v < VIS_ROJO)
+    .map(([t]) => t).sort((a, b) => a - b)[0] ?? null;
+}
+
 // ---------- pronostico ----------
 const columna = (p, nuevoDia) => `<div class="col ${nuevoDia ? "nuevo-dia" : ""}">
     <div class="h">${hora(p.t).slice(0, 2)}h</div>${bf(p.v)}<div class="g">${n0(p.g)}</div>
     <div class="dir">${flecha(p.dir)}${p.dir == null ? "" : cardinal(p.dir)}</div>
-    <div class="tor" title="${p.tormenta ? `${p.tormenta} de ${p.n} modelos dan tormenta` : ""}">${p.tormenta ? ic("tormenta") : p.lluvia >= 0.5 ? ic("lluvia") : ""}</div></div>`;
-const cabecera = `<div class="col cab"><div class="h">hora</div><div style="min-height:27px;display:grid;align-items:center">viento</div><div class="g">ráfaga</div><div class="dir" style="min-height:34px">de</div><div class="tor"></div></div>`;
-function pronostico(filas, config) {
+    <div class="tor" title="${p.tormenta ? `${p.tormenta} de ${p.n} modelos dan tormenta` : ""}">${p.tormenta ? ic("tormenta") : p.lluvia >= 0.5 ? ic("lluvia") : ""}</div>
+    ${chipVis(p.vis)}</div>`;
+const cabecera = `<div class="col cab"><div class="h">hora</div><div style="min-height:27px;display:grid;align-items:center">viento</div><div class="g">ráfaga</div><div class="dir" style="min-height:34px">de</div><div class="tor"></div><div class="vis-cab">visib.<br>km</div></div>`;
+function pronostico(filas, config, vis) {
   const punto = config?.find((c) => c.clave === "punto_pronostico")?.valor;
-  const ph = porHora(filas).filter((p) => p.t >= Date.now() - 3600e3);
+  const vm = visMapa(vis);
+  const ph = porHora(filas).filter((p) => p.t >= Date.now() - 3600e3).map((p) => ({ ...p, vis: vm.get(p.t) ?? null }));
   if (!ph.length) return `<section class="tarjeta"><h2 class="titulo">Pronóstico</h2><p class="nota">Sin pronóstico disponible.</p></section>`;
   const prox = ph.slice(0, 24);
   const dias = new Map();
@@ -304,10 +334,12 @@ function pronostico(filas, config) {
     const conDir = hs.filter((p) => p.dir != null);
     const dir = dirMedia(conDir.map((p) => p.dir), conDir.map((p) => p.v ?? 1)); // predominante, pesada por el viento
     const tor = hs.some((p) => p.tormenta);
+    const vs = hs.map((p) => p.vis).filter((x) => x != null), vMin = vs.length ? Math.min(...vs) : null;
     return `<details class="dia" data-clave="dia-${k}"><summary>
       <span class="nom">${i === 0 ? "Mañana" : esc(fD.format(new Date(hs[0].t)))}${hs.length < 20 ? `<small>hasta ${hora(hs.at(-1).t).slice(0, 2)} h</small>` : ""}</span>
       ${bf(vMax)}<span class="raf">r ${n0(gMax)}</span>
       <span class="dd">${flecha(dir)}${dir == null ? "" : cardinal(dir)}</span>
+      <span class="vis-dia" title="visibilidad mínima del día">${vMin != null && vMin >= 1000 ? `<small>vis</small> ` : ""}${chipVis(vMin)}</span>
       <span>${tor ? `<span style="color:var(--l-amarillo)" title="tormenta">${ic("tormenta")}</span>` : ""}</span>
       <span class="chev">${ic("chev")}</span></summary>
       <div class="tira">${cabecera}${hs.map((p) => columna(p)).join("")}</div></details>`;
@@ -315,11 +347,19 @@ function pronostico(filas, config) {
   const modelos = [...new Set(filas.map((f) => f.modelo))].sort();
   const corridas = modelos.map((mo) => { const c = filas.find((f) => f.modelo === mo)?.corrida; return `${mo.toUpperCase()} ${c ? fechaHora(c) : "?"}`; });
   let diaAnt = fDiaClave.format(new Date(prox[0].t));
-  return `<section class="tarjeta">
+  const sinVis = !prox.some((p) => p.vis != null);
+  // De que corrida sale la visibilidad: si Open-Meteo no respondio, puede ser vieja (gris si tiene mas de 12 h).
+  const corrVis = [...new Set((vis ?? []).map((f) => f.modelo))].sort().map((mo) => {
+    const c = (vis ?? []).filter((f) => f.modelo === mo).map((f) => f.corrida).sort().pop();
+    const vieja = minDesde(c) > 12 * 60;
+    return `<span class="${vieja ? "corrida-vieja" : "corrida-ok"}">${mo === "ecmwf" ? "ECMWF" : mo.toUpperCase()}: corrida de las ${hora(c)}${fDiaClave.format(new Date(c)) !== fDiaClave.format(new Date()) ? ` del ${fD.format(new Date(c))}` : ""}${vieja ? " (más de 12 h)" : ""}</span>`;
+  }).join(" · ");
+  return `<section class="tarjeta" id="sec-pron">
     <h2 class="titulo">Pronóstico <span>próximas 24 h · ${esc(punto?.nombre ?? "Norden")}</span></h2>
     <div class="tira">${cabecera}${prox.map((p) => { const k = fDiaClave.format(new Date(p.t)); const n = k !== diaAnt; diaAnt = k; return columna(p, n); }).join("")}</div>
+    <p class="nota nota-vis">${sinVis ? "<strong>Visibilidad: sin dato.</strong> " : ""}Visibilidad pronosticada (Open-Meteo). No hay medición real en el canal. Rojo: menos de ${VIS_ROJO.toLocaleString("es-UY")} m; amarillo: menos de ${VIS_AMARILLO / 1000} km.${corrVis ? ` ${corrVis}.` : ""}</p>
     <div class="dias">${filasDia}</div>
-    <p class="nota">Promedio de los modelos (${corridas.join(" · ")}). En cada día: viento y ráfaga máximos en nudos y dirección predominante. Tocá un día para verlo hora por hora.</p>
+    <p class="nota">Promedio de los modelos (${corridas.join(" · ")}). En cada día: viento y ráfaga máximos en nudos, dirección predominante y visibilidad mínima. Tocá un día para verlo hora por hora. Visibilidad: el valor más bajo entre ECMWF (9 km) y GFS.</p>
   </section>`;
 }
 
@@ -482,7 +522,7 @@ function realVsPron(d) {
     <h3 class="sub">¿Qué modelo acierta más en Norden?</h3>${ranking}`);
 }
 
-const NOMBRE_FUENTE = { carp: "CARP (4 estaciones)", armada_colonia: "Armada Colonia", open_meteo: "Open-Meteo", smn_alertas: "Alertas SMN", sohma: "Avisos SOHMA (cada hora)", carp_tramos: "Tabla de tramos CARP (lunes 9 h)" };
+const NOMBRE_FUENTE = { carp: "CARP (4 estaciones)", armada_colonia: "Armada Colonia", open_meteo: "Open-Meteo", smn_alertas: "Alertas SMN", sohma: "Avisos SOHMA (cada hora)", carp_tramos: "Tabla de tramos CARP (lunes 9 h)", visibilidad: "Visibilidad (Open-Meteo: ECMWF 9 km y GFS)" };
 // Cuanto puede pasar sin lectura buena antes de marcar problema (minutos).
 const PLAZO_FUENTE = { sohma: 90, carp_tramos: 8 * 24 * 60 };
 function robot(d) {
@@ -503,7 +543,7 @@ function render(d) {
   const nombre = Object.fromEntries((d.estaciones ?? []).map((e) => [e.id, e.nombre]));
   const cd = canalDatos(d);
   raiz.innerHTML = barra(d, cd) + `<main>
-    ${norden(ix, d.pron6 ?? [])}${aguaSec(d, ix, aguaAj)}${pronostico(d.pronostico ?? [], d.config)}${marea(d.l24 ?? [])}${otras(ix, nombre)}
+    ${norden(ix, d.pron6 ?? [])}${aguaSec(d, ix, aguaAj)}${pronostico(d.pronostico ?? [], d.config, d.vis ?? [])}${marea(d.l24 ?? [])}${otras(ix, nombre)}
     ${canal(d, cd)}${alertasSec(d)}${realVsPron(d)}${robot(d)}</main>
     <footer><div><p>Esta app es una ayuda. No reemplaza la consulta de las fuentes oficiales para tomar decisiones de seguridad.</p>
     <p>Fuentes: CARP, Armada Nacional (SOHMA), Open-Meteo, SMN. Hora de Uruguay (UTC-3). Viento en nudos, marea en metros (LIMB).</p></div></footer>`;

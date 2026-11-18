@@ -176,6 +176,47 @@ async function openMeteo() {
   return resultado;
 }
 
+// ---------- 3b. Visibilidad (Open-Meteo): ECMWF 9 km y GFS, solo corridas nuevas ----------
+// ICON no trae visibilidad y el ECMWF de 0,25 grados tampoco: por eso aca va el ECMWF de 9 km (ecmwf_ifs).
+const MODELOS_VIS = [
+  { modelo: "ecmwf", api: "ecmwf_ifs", meta: "ecmwf_ifs" },
+  { modelo: "gfs", api: "gfs_global", meta: "ncep_gfs025" },
+];
+const OPEN_METEO = "https://api.open-meteo.com";
+const OPEN_METEO_FALLA = "https://open-meteo-no-responde.invalid"; // solo para la prueba
+async function visibilidad(base: string) {
+  const [cfg] = await sql`select valor from public.configuracion where clave = 'punto_pronostico'`;
+  const { lat, lon } = cfg.valor;
+  const traer = async (url: string) => {
+    try { return await fetch(url, { signal: AbortSignal.timeout(30000) }); }
+    catch (e) { throw new Error(`Open-Meteo no responde (${e instanceof Error ? e.name : "sin conexión"})`); }
+  };
+  const resultado: Record<string, string> = {};
+  const errores: string[] = [];
+  for (const m of MODELOS_VIS) try {
+    const rm = await traer(`${base}/data/${m.meta}/static/meta.json`);
+    const meta = rm.ok ? await rm.json() : null;
+    if (!Number.isFinite(meta?.last_run_initialisation_time)) throw new Error(`no pude leer la hora de corrida (HTTP ${rm.status})`);
+    const corrida = new Date(meta.last_run_initialisation_time * 1000);
+    const [ya] = await sql`select 1 from public.visibilidad where modelo = ${m.modelo} and corrida = ${corrida.toISOString()}
+      and lat = ${lat} and lon = ${lon} limit 1`;
+    if (ya) { resultado[m.modelo] = "sin novedad (" + corrida.toISOString() + ")"; continue; }
+    const j = await (await traer(`${base}/v1/forecast?latitude=${lat}&longitude=${lon}&hourly=visibility&models=${m.api}&timezone=GMT&forecast_days=5`)).json();
+    if (j.error || !j.hourly?.visibility) throw new Error(j.reason ?? "respuesta sin datos");
+    const filas = j.hourly.time.map((t: string, i: number) => ({
+      modelo: m.modelo, corrida: corrida.toISOString(), hora: new Date(t + "Z").toISOString(), visibilidad_m: j.hourly.visibility[i], lat, lon,
+    })).filter((f: any) => f.visibilidad_m !== null);
+    if (!filas.length) throw new Error("el modelo no trajo visibilidad");
+    await sql`insert into public.visibilidad ${sql(filas)} on conflict do nothing`;
+    resultado[m.modelo] = `nueva corrida ${corrida.toISOString()}: ${filas.length} horas`;
+  } catch (e) {
+    errores.push(`${m.modelo}: ${e instanceof Error ? e.message : e}`);
+  }
+  if (errores.length === MODELOS_VIS.length) throw new Error(errores.join(" | "));
+  if (errores.length) resultado.errores = errores.join(" | ");
+  return resultado;
+}
+
 // ---------- 4. Alertas SMN: solo archivos nuevos, despacio, filtrando por zona ----------
 const PUNTOS = { norden: [-34.6286, -57.925], martin_garcia: [-34.183, -58.25] } as const;
 const adentro = (lat: number, lon: number, poly: number[][]) => {
@@ -220,9 +261,13 @@ Deno.serve(async (req) => {
   const [s] = await sql`select decrypted_secret from vault.decrypted_secrets where name = 'token_robot'`;
   if (!s || req.headers.get("x-token-robot") !== s.decrypted_secret) return new Response("no autorizado", { status: 401 });
 
-  const fuentes: Record<string, () => Promise<unknown>> = { carp: carp, armada_colonia: armadaColonia, open_meteo: openMeteo, smn_alertas: alertasSMN };
+  // ?probar_falla=visibilidad: la visibilidad se pide a una direccion que no existe (prueba del aviso de error).
+  const baseVis = new URL(req.url).searchParams.get("probar_falla") === "visibilidad" ? OPEN_METEO_FALLA : OPEN_METEO;
+  const fuentes: Record<string, () => Promise<unknown>> = {
+    carp: carp, armada_colonia: armadaColonia, open_meteo: openMeteo, visibilidad: () => visibilidad(baseVis), smn_alertas: alertasSMN,
+  };
   const resumen: Record<string, unknown> = {};
-  // Las cuatro fuentes en paralelo (el SMN tarda mas porque va despacio a proposito).
+  // Las fuentes en paralelo (el SMN tarda mas porque va despacio a proposito).
   await Promise.all(Object.entries(fuentes).map(async ([nombre, fn]) => {
     try { const r = await fn(); resumen[nombre] = r; await registrar(nombre, true, r); }
     catch (e) { const msg = e instanceof Error ? e.message : String(e); resumen[nombre] = { error: msg }; await registrar(nombre, false, null, msg); }
