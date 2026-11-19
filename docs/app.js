@@ -2,6 +2,7 @@
 const SUPABASE_URL = "https://yoxioyszauoaqiwqrpae.supabase.co";
 const SUPABASE_KEY = "sb_publishable_vMJL1gkw0u3zBAbJODQNpw_TS0avBJi";
 const VIEJO_MIN = 20;              // minutos sin dato para considerar una lectura vieja
+const VERSION_APP = 25;            // tiene que ser igual a VERSION en sw.js
 const REFRESCO_MS = 2 * 60 * 1000; // se actualiza cada 2 minutos con la app abierta
 const TZ = "America/Montevideo";
 const raiz = document.getElementById("raiz");
@@ -861,8 +862,8 @@ function robot(d) {
 }
 
 function fuentesSec() {
-  return plegable("sec-fuentes", "Fuentes y aclaraciones", "LIMB, cálculos, fuentes",
-    Object.values(INFO).map(([t, f]) => `<h3 class="sub">${esc(t)}</h3><p class="nota" style="margin-top:0">${esc(f())}</p>`).join("") +
+  return plegable("sec-fuentes", "Fuentes y aclaraciones", `Versión ${VERSION_APP} · LIMB, cálculos, fuentes`,
+    `<p class="nota" style="margin-top:0"><strong>Versión ${VERSION_APP}</strong> de Tu Faro.</p>` + Object.values(INFO).map(([t, f]) => `<h3 class="sub">${esc(t)}</h3><p class="nota" style="margin-top:0">${esc(f())}</p>`).join("") +
     `<h3 class="sub">Aviso de uso</h3><p class="nota" style="margin-top:0">${avisoAceptado() ? `Aceptado el ${fechaHora(avisoAceptado().fecha)}` : "Todavía no aceptado"}: es una ayuda, no reemplaza al práctico ni a la información oficial. El agua por tramo es una estimación.</p>`);
 }
 const malFuente = (x) => x.detalle?.terminado ? false : (x.ultimo_error && (!x.ultimo_ok || x.ultimo_error > x.ultimo_ok)) || !x.ultimo_ok || minDesde(x.ultimo_ok) > (PLAZO_FUENTE[x.fuente] ?? VIEJO_MIN);
@@ -1158,5 +1159,36 @@ if (!window.MODO_PRUEBA) { // la pagina de pruebas (solo en la compu) usa las fu
   actualizar();
   setInterval(() => { if (document.visibilityState === "visible") actualizar(); }, REFRESCO_MS);
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") actualizar(); });
-  if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").then(() => revisarSuscripcion()).catch(() => {});
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then((reg) => { revisarSuscripcion(); vigilarVersion(reg); }).catch(() => {});
+}
+
+// ---------- version nueva de la app ----------
+// La app abre con los archivos guardados; por detras pregunta si hay version nueva (sin esperar ni mostrar errores si no hay señal).
+// Cuando la nueva esta bajada entera: si recien abriste y no tocaste nada, se actualiza sola; si no, cartel y elegis vos.
+// Los datos guardados (calado, buque, ajustes, notas, avisos, GPS) no se tocan: estan aparte de los archivos.
+const RECIEN_ABIERTA_MS = 15000;
+let abiertaEn = Date.now(), tocada = false, recargando = false;
+for (const ev of ["pointerdown", "keydown", "wheel", "touchstart"]) addEventListener(ev, () => { tocada = true; }, { capture: true, passive: true });
+const enUso = () => tocada || Date.now() - abiertaEn > RECIEN_ABIERTA_MS
+  || document.getElementById("panel-mapa")?.hidden === false || (typeof GPS !== "undefined" && GPS.watch != null);
+function aplicarVersion(sw) { recargando = true; sw.postMessage("actualizar"); }
+function cartelVersion(sw) {
+  let b = document.getElementById("cartel-version");
+  if (!b) {
+    b = document.createElement("button"); b.type = "button"; b.id = "cartel-version"; b.className = "cartel-version";
+    b.innerHTML = `${ic("campana")}<span>Hay una versión nueva · <strong>Tocá para actualizar</strong></span>`;
+    (document.querySelector(".app") ? document.body : document.documentElement).appendChild(b);
+  }
+  b.onclick = () => { b.disabled = true; b.querySelector("span").textContent = "Actualizando…"; aplicarVersion(sw); };
+}
+function vigilarVersion(reg) {
+  navigator.serviceWorker.addEventListener("controllerchange", () => { if (recargando) location.reload(); });
+  const lista = (sw) => { if (!navigator.serviceWorker.controller) return; enUso() ? cartelVersion(sw) : aplicarVersion(sw); };
+  const esperar = (sw) => sw && sw.addEventListener("statechange", () => { if (sw.state === "installed") lista(sw); });
+  if (reg.waiting) lista(reg.waiting);
+  esperar(reg.installing);
+  reg.addEventListener("updatefound", () => esperar(reg.installing));
+  const preguntar = () => reg.update().catch(() => {}); // sin señal: no pasa nada, se vuelve a preguntar la proxima vez
+  preguntar();
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { abiertaEn = Date.now(); tocada = false; preguntar(); } });
 }
