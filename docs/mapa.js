@@ -70,31 +70,107 @@ function kmDePosicion(eje, lat, lon) {
     const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
     const t = l2 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / l2)) : 0;
     const px = ax + t * dx, py = ay + t * dy, dist = Math.hypot(px, py);
-    if (!mejor || dist < mejor.dist) mejor = { km: a.km + t * (b.km - a.km), dist };
+    // rumboEje: hacia donde crece el km en ese tramo de recta (para saber si voy aguas arriba o abajo)
+    if (!mejor || dist < mejor.dist) mejor = { km: a.km + t * (b.km - a.km), dist, rumboEje: (Math.atan2(dx, dy) * 180 / Math.PI + (b.km >= a.km ? 360 : 540)) % 360 };
   }
   return mejor;
 }
+
+// ----- velocidad, rumbo y proximo punto de informacion (todo en el celular, sin internet) -----
+// Puntos de informacion del REMAGA 2019 (ETA y hora de paso, canal 81). Aguas arriba = km creciente (REMAGA).
+const PUNTOS_INFO = [39, 60.1, 80.1, 89.6, 93, 118.2, 134.2, 143.2, 145.5];
+const KN_MS = 1852 / 3600, VENTANA_MS = 10000, DETENIDO_KN = 0.5, SIN_DATO_MS = 30000, PRECISION_CALCULO_M = 50;
+const PUNTOS8 = ["N", "NE", "E", "SE", "S", "SO", "O", "NO"];
+const rumbo8 = (g) => PUNTOS8[Math.round((((g % 360) + 360) % 360) / 45) % 8];
+function planoM(a, b) { // metros este/norte de a hacia b
+  const kx = 111320 * Math.cos(((a.lat + b.lat) / 2) * Math.PI / 180);
+  return { x: (b.lon - a.lon) * kx, y: (b.lat - a.lat) * 110540 };
+}
+const rumboEntre = (a, b) => { const p = planoM(a, b); return (Math.atan2(p.x, p.y) * 180 / Math.PI + 360) % 360; };
+const distEntre = (a, b) => { const p = planoM(a, b); return Math.hypot(p.x, p.y); };
+const mediaRecortada = (xs) => { const s = [...xs].sort((a, b) => a - b); const u = s.length >= 5 ? s.slice(1, -1) : s; return u.reduce((a, b) => a + b, 0) / u.length; };
+const mediaAngulos = (gs) => { const x = gs.reduce((a, g) => a + Math.sin(g * Math.PI / 180), 0), y = gs.reduce((a, g) => a + Math.cos(g * Math.PI / 180), 0); return (Math.atan2(x, y) * 180 / Math.PI + 360) % 360; };
+// hist: posiciones { t, lat, lon, acc, v (m/s o null), rumbo (grados o null) }. Devuelve null si no hay posicion de los ultimos 30 s.
+function movimiento(hist, ahora) {
+  const ult = hist[hist.length - 1];
+  if (!ult || ahora - ult.t > SIN_DATO_MS) return null;
+  const ven = hist.filter((h) => h.t >= ult.t - VENTANA_MS);
+  const conV = ven.filter((h) => h.v != null);
+  // Para calcular con las posiciones: las precisas de la ventana (o de los ultimos 30 s si en 10 s hay pocas)
+  let buenas = ven.filter((h) => h.acc == null || h.acc <= PRECISION_CALCULO_M);
+  if (buenas.length < 2 || buenas.at(-1).t - buenas[0].t < 2000) buenas = hist.filter((h) => ult.t - h.t <= SIN_DATO_MS && (h.acc == null || h.acc <= PRECISION_CALCULO_M));
+  const par = buenas.length >= 2 && buenas.at(-1).t - buenas[0].t >= 2000 ? [buenas[0], buenas.at(-1)] : null;
+  let ms = conV.length ? mediaRecortada(conV.map((h) => h.v)) : par ? distEntre(par[0], par[1]) / ((par[1].t - par[0].t) / 1000) : null;
+  if (ms == null) return { kn: null, rumbo: null, detenido: false };
+  const kn = ms / KN_MS, detenido = kn < DETENIDO_KN;
+  const conR = ven.filter((h) => h.rumbo != null && (h.v == null || h.v >= 0.25));
+  const rumbo = detenido ? null : conR.length ? mediaAngulos(conR.map((h) => h.rumbo)) : par && distEntre(par[0], par[1]) >= 5 ? rumboEntre(par[0], par[1]) : null;
+  return { kn, rumbo, detenido };
+}
+// +1 aguas arriba, -1 aguas abajo, 0 = de traves al canal (no se sabe)
+function sentidoDe(rumbo, rumboEje) {
+  if (rumbo == null || rumboEje == null) return 0;
+  const c = Math.cos((rumbo - rumboEje) * Math.PI / 180);
+  return c > 0.25 ? 1 : c < -0.25 ? -1 : 0;
+}
+const PASADO_KM = 0.05; // a menos de 50 m de un punto ya se cuenta como pasado
+const proximoPunto = (km, sentido) => sentido > 0 ? PUNTOS_INFO.find((p) => p > km + PASADO_KM) ?? null : [...PUNTOS_INFO].reverse().find((p) => p < km - PASADO_KM) ?? null;
+const horaHM = (ms) => new Date(Math.round(ms / 60000) * 60000).toLocaleTimeString("es-UY", { hour: "2-digit", minute: "2-digit", hour12: false });
+const kmDist = (x) => x.toLocaleString("es-UY", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 const LEJOS_DEL_EJE_M = 1500; // mas lejos que esto del eje: "fuera del canal"
 const tramoDeKm = (tramos, km) => (tramos ?? []).find((t) => km >= Number(t.km_desde) && km < Number(t.km_hasta)) ?? (tramos ?? []).find((t) => km >= Number(t.km_desde) && km <= Number(t.km_hasta)) ?? null;
-let GPS = { watch: null, marca: null, circulo: null, centrado: false, ultima: null };
-function textoPosicion(pos) {
+let GPS = { watch: null, marca: null, circulo: null, centrado: false, ultima: null, hist: [], sentido: 0, info: false, reloj: null };
+const INFO_VEL = "Velocidad sobre el fondo, del GPS del celular, promediada 10 segundos (si el celular no la da, se calcula con las últimas posiciones). Detenido: menos de 0,5 kn. Aguas arriba = km creciente (REMAGA 2019). La hora de paso por el próximo punto de información (REMAGA 2019, canal 81) se estima con la velocidad de este momento: no tiene en cuenta si vas a frenar ni los cambios de corriente. Todo se calcula en el celular, sin internet.";
+function textoPosicion(pos, ahora = Date.now()) {
   if (!MAPA) return "";
   const { latitude: lat, longitude: lon, accuracy } = pos.coords;
   const r = kmDePosicion(MAPA.eje, lat, lon);
-  if (r.dist > LEJOS_DEL_EJE_M) return `Fuera del canal (a ${(r.dist / 1000).toLocaleString("es-UY", { maximumFractionDigits: 1 })} km del eje) · ±${Math.round(accuracy)} m`;
-  const t = tramoDeKm(ultimos?.tramos, r.km);
-  return `km ${kmTxt(r.km)}${t ? ` · ${t.nombre}` : ""} · ±${Math.round(accuracy)} m`;
+  const enCanal = r.dist <= LEJOS_DEL_EJE_M;
+  const lineas = [];
+  if (!enCanal) lineas.push(`Fuera del canal (a ${(r.dist / 1000).toLocaleString("es-UY", { maximumFractionDigits: 1 })} km del eje) · ±${Math.round(accuracy)} m`);
+  else { const t = tramoDeKm(ultimos?.tramos, r.km); lineas.push(`km ${kmTxt(r.km)}${t ? ` · ${esc(t.nombre)}` : ""} · ±${Math.round(accuracy)} m`); }
+  const m = movimiento(GPS.hist, ahora);
+  if (!enCanal) GPS.sentido = 0;
+  else if (m && !m.detenido && m.rumbo != null) { const s = sentidoDe(m.rumbo, r.rumboEje); if (s) GPS.sentido = s; } // de traves: queda el ultimo
+  const lado = GPS.sentido > 0 ? "aguas arriba" : "aguas abajo";
+  if (!m || m.kn == null) lineas.push("Velocidad: sin dato del GPS");
+  else if (m.detenido) lineas.push(`detenido${enCanal && GPS.sentido ? ` · venías ${lado}` : ""}`);
+  else lineas.push(`${kmDist(m.kn)} kn${m.rumbo != null ? ` · rumbo ${Math.round(m.rumbo) % 360}° · ${rumbo8(m.rumbo)}` : ""}${enCanal && GPS.sentido ? ` · ${lado}` : ""}`);
+  if (enCanal) {
+    if (GPS.sentido) {
+      const p = proximoPunto(r.km, GPS.sentido);
+      if (p == null) lineas.push(`Ya pasaste el último punto de información (km ${kmTxt(GPS.sentido > 0 ? PUNTOS_INFO.at(-1) : PUNTOS_INFO[0])})`);
+      else {
+        const d = Math.abs(p - r.km), andando = m && m.kn != null && !m.detenido;
+        lineas.push(`Próximo punto: km ${kmTxt(p)} · a ${kmDist(d)} km · ${andando ? `paso ≈ ${horaHM(ahora + d * 1000 / (m.kn * KN_MS) * 1000)}` : `sin hora${m?.detenido ? " (detenido)" : ""}`}`);
+      }
+    } else { // todavia no se sabe para que lado: los dos vecinos, sin hora
+      const ab = proximoPunto(r.km, -1), ar = proximoPunto(r.km, 1);
+      lineas.push(`Puntos de información: ${[ab != null && `km ${kmTxt(ab)} (abajo) a ${kmDist(r.km - ab)} km`, ar != null && `km ${kmTxt(ar)} (arriba) a ${kmDist(ar - r.km)} km`].filter(Boolean).join(" · ")}`);
+    }
+  }
+  return lineas.map((l, i) => `<span class="mp-l${i ? "" : " mp-km"}">${l}</span>`).join("")
+    + `<span class="mp-aclara">Velocidad sobre el fondo (GPS) <button type="button" class="mp-i" aria-expanded="${GPS.info}" aria-label="Más información">i</button></span>`
+    + (GPS.info ? `<span class="mp-info">${INFO_VEL}</span>` : "");
+}
+function pintarPosicion() {
+  if (!GPS.ultima) return;
+  const el = document.getElementById("mapa-pos"); if (!el) return;
+  el.hidden = false; el.innerHTML = textoPosicion(GPS.ultima);
 }
 function mostrarPosicion(pos) {
   if (!MAPA) return;
   const ll = [pos.coords.latitude, pos.coords.longitude];
   GPS.ultima = pos;
+  const c = pos.coords, num = (x) => typeof x === "number" && Number.isFinite(x) ? x : null;
+  GPS.hist.push({ t: pos.timestamp ?? Date.now(), lat: c.latitude, lon: c.longitude, acc: num(c.accuracy), v: num(c.speed), rumbo: num(c.heading) });
+  while (GPS.hist.length && GPS.hist.at(-1).t - GPS.hist[0].t > 60000) GPS.hist.shift();
   if (!GPS.marca) {
     GPS.circulo = L.circle(ll, { radius: pos.coords.accuracy, color: varCss("--acento"), weight: 1, fillOpacity: 0.12, interactive: false }).addTo(MAPA.map);
     GPS.marca = L.marker(ll, { icon: L.divIcon({ className: "yo", html: '<span class="yo-punto"></span>', iconSize: [22, 22], iconAnchor: [11, 11] }), zIndexOffset: 2000, keyboard: false }).addTo(MAPA.map);
   } else { GPS.marca.setLatLng(ll); GPS.circulo.setLatLng(ll).setRadius(pos.coords.accuracy); }
   if (!GPS.centrado) { MAPA.map.setView(ll, Math.max(MAPA.map.getZoom(), 13)); GPS.centrado = true; }
-  const el = document.getElementById("mapa-pos"); el.hidden = false; el.textContent = textoPosicion(pos);
+  pintarPosicion();
 }
 function errorPosicion(e) {
   const el = document.getElementById("mapa-pos"); el.hidden = false;
@@ -104,15 +180,17 @@ function errorPosicion(e) {
 function iniciarGps() {
   if (!("geolocation" in navigator)) { errorPosicion({ code: 2 }); return; }
   if (GPS.watch != null) { if (GPS.ultima && MAPA) MAPA.map.setView([GPS.ultima.coords.latitude, GPS.ultima.coords.longitude]); return; } // ya andaba: centrar
-  GPS.centrado = false;
+  GPS.centrado = false; GPS.hist = []; GPS.sentido = 0; // cada vez que se prende, el recorrido arranca de cero
   GPS.watch = navigator.geolocation.watchPosition(mostrarPosicion, errorPosicion, { enableHighAccuracy: true, maximumAge: 5000, timeout: 30000 });
+  GPS.reloj = setInterval(pintarPosicion, 5000); // la hora de paso y el "sin dato" se actualizan aunque no llegue posicion nueva
   guardarLocal("gps_activado", true);
   document.getElementById("btn-gps")?.classList.add("activo");
   const el = document.getElementById("mapa-pos"); el.hidden = false; el.textContent = "Buscando GPS…";
 }
 function detenerGps() {
   if (GPS.watch != null) navigator.geolocation.clearWatch(GPS.watch);
-  GPS.watch = null; GPS.centrado = false;
+  clearInterval(GPS.reloj);
+  GPS.watch = null; GPS.centrado = false; GPS.reloj = null; GPS.hist = []; GPS.sentido = 0;
   document.getElementById("btn-gps")?.classList.remove("activo");
 }
 
@@ -133,6 +211,7 @@ function panelMapa() {
   document.body.appendChild(p);
   p.querySelector("#btn-cerrar-mapa").addEventListener("click", () => history.state?.mapa ? history.back() : cerrarMapa());
   p.querySelector("#btn-gps").addEventListener("click", () => iniciarGps());
+  p.querySelector("#mapa-pos").addEventListener("click", (ev) => { if (ev.target.closest(".mp-i")) { GPS.info = !GPS.info; pintarPosicion(); } });
   return p;
 }
 async function abrirMapa() {

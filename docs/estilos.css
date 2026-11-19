@@ -447,3 +447,10 @@ html.con-mapa body { overflow: hidden; }
 .app .avisos-cel .av-ayuda summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; color: var(--acento); }
 .app .avisos-cel .av-resp { border-left: 4px solid var(--l-amarillo); padding: 6px 10px; border-radius: 6px; background: color-mix(in srgb, var(--l-amarillo) 10%, transparent); }
 .app .avisos-cel [hidden] { display: none !important; }
+
+/* Recuadro de posicion del mapa: km, velocidad/rumbo, proximo punto, aclaracion */
+.app .mapa-pos { font-weight: 600; display: flex; flex-direction: column; gap: 2px; max-height: 50vh; overflow-y: auto; }
+.app .mapa-pos .mp-km { font-weight: 700; }
+.app .mapa-pos .mp-aclara { display: flex; align-items: center; gap: 6px; font-size: .75rem; font-weight: 400; color: var(--suave); }
+.app .mapa-pos .mp-i { width: 28px; height: 28px; min-height: 28px; padding: 0; border-radius: 50%; border: 1px solid var(--borde); background: none; color: var(--acento); font: italic 700 .85rem Georgia, serif; }
+.app .mapa-pos .mp-info { font-size: .8rem; font-weight: 400; color: var(--suave); }
