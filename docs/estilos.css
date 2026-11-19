@@ -46,6 +46,9 @@
 .app .cartel.rojo { border-left-color: var(--l-rojo); }
 .app .cartel.rojo svg { color: var(--l-rojo); }
 .app .cartel.azul { border-left-color: var(--acento); }
+.app .cartel { white-space: normal; } /* a 360 px el texto largo baja de renglon en vez de cortarse */
+.app .cartel.amarillo { border-left-color: var(--l-amarillo); }
+.app .cartel.amarillo svg { color: var(--l-amarillo); }
 .app .cartel.azul svg { color: var(--acento); }
 .app .cartel .ir { margin-left: auto; color: var(--suave); }
 
@@ -484,3 +487,10 @@ html.con-mapa body { overflow: hidden; }
 .cartel-version svg { width: 18px; height: 18px; flex: none; color: var(--acento); }
 .con-mapa .cartel-version { bottom: auto; top: calc(62px + env(safe-area-inset-top, 0px)); left: auto; right: 12px; transform: none; width: min(420px, calc(100% - 80px)); } /* deja libres los botones de zoom */
 .cartel-version span { white-space: normal; min-width: 0; line-height: 1.3; }
+
+/* Avisos en pausa (v26) */
+.app .aviso-pausa { display: flex; gap: 8px; align-items: flex-start; margin: 8px 0; padding: 6px 10px; font-size: .85rem; border-left: 4px solid var(--l-amarillo); border-radius: 6px; background: color-mix(in srgb, var(--l-amarillo) 10%, transparent); }
+.app .aviso-pausa svg { width: 18px; height: 18px; flex: none; color: var(--l-amarillo); }
+.app .avisos-cel .av-op small.av-pausa { color: var(--l-amarillo); font-weight: 600; }
+.app[data-tema="noche"] .aviso-pausa { background: none; }
+.app .respaldo .resp-val { color: var(--suave); font-weight: 600; }

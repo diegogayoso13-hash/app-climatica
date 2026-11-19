@@ -1,7 +1,7 @@
 // Guarda los archivos de la app (pantallas y codigo) para que abra al instante, con o sin señal.
 // Los datos NO pasan por aca (vienen de Supabase, otro sitio): se piden frescos siempre y, si son viejos, la app los muestra en gris con su hora.
 // Version nueva: al publicar, subir VERSION (y VERSION_APP en app.js, con el mismo numero).
-const VERSION = 25;
+const VERSION = 26;
 const CACHE = `tu-faro-v${VERSION}`;
 const ARCHIVOS = ["./", "index.html", "estilos.css", "app.js", "manifest.webmanifest", "icono-192.png", "icono-512.png", "icono.svg", "mapa.js", "senales.json", "vendor/leaflet/leaflet.js", "vendor/leaflet/leaflet.css"];
 
@@ -30,7 +30,8 @@ self.addEventListener("push", (e) => {
   try { m = e.data ? e.data.json() : {}; } catch { m = { cuerpo: e.data ? e.data.text() : "" }; }
   e.waitUntil(self.registration.showNotification(m.titulo || "Tu Faro", {
     body: m.cuerpo || "", icon: "icono-192.png", badge: "icono-192.png", lang: "es-UY",
-    tag: m.tipo || "tu-faro", renotify: true, data: { ir: typeof m.ir === "string" ? m.ir : "" },
+    tag: m.tipo || "tu-faro", renotify: !m.silencioso, silent: m.silencioso === true, // "en pausa" / "activo de nuevo": sin sonido ni vibracion
+    data: { ir: typeof m.ir === "string" ? m.ir : "" },
   }));
 });
 // Tocar el aviso: abre Tu Faro (o la trae al frente) en la seccion que corresponde.

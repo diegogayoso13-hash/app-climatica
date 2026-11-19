@@ -42,6 +42,17 @@ async function registrar(ok: boolean, detalle: unknown, error?: string) {
       on conflict (fuente) do update set ultimo_error = now(), mensaje_error = excluded.mensaje_error`;
 }
 
+// ---------- registro de 30 dias (avisos_registro) ----------
+// "aceptado" = el servicio de avisos (Google/Apple/Mozilla) lo recibio. NO sabemos si el celular lo mostro.
+type Registro = { celular?: string | null; evento: "alta" | "actualizar" | "baja_usuario" | "baja_servicio" | "aviso"; tipo?: string | null; resultado?: "aceptado" | "rechazado" | null; detalle?: string | null; prueba: boolean };
+async function anotar(r: Registro) {
+  try {
+    await sql`insert into public.avisos_registro (celular, evento, tipo, resultado, detalle, prueba)
+      values (${r.celular ? r.celular.slice(0, 8) : null}, ${r.evento}, ${r.tipo ?? null}, ${r.resultado ?? null}, ${r.detalle ? r.detalle.slice(0, 200) : null}, ${r.prueba})`;
+  } catch { /* el registro nunca frena un aviso */ }
+}
+const motivoRechazo = (res: { estado: number; detalle?: string }) => `HTTP ${res.estado}${res.detalle ? `: ${res.detalle.replace(/\s+/g, " ").slice(0, 120)}` : ""}`;
+
 // ---------- datos reales para evaluar ----------
 const SEV: Record<string, string> = { Minor: "menor", Moderate: "moderada", Severe: "severa", Extreme: "extrema" };
 async function datosReales(ahora: number): Promise<Datos> {
@@ -58,44 +69,57 @@ async function datosReales(ahora: number): Promise<Datos> {
     texto: n.tipo === "radioaviso" ? `Radioaviso AVUR ${n.clave}: ${String(n.descripcion ?? "").replace(/^CANALES A MARTIN GARCIA · /, "").toLowerCase()}`
       : `Nº ${n.clave} ${String(n.descripcion ?? "").replace(/\s*KM\s*[\d.,]+/i, "").toLowerCase()} ${n.estado}${n.km != null ? ` (km ${String(n.km).replace(".", ",")})` : ""}` }));
   const visF = await sql`select hora, min(visibilidad_m) as v from public.visibilidad_actual group by hora order by hora`;
+  const [vc] = await sql`select max(corrida) as c from public.visibilidad_actual`;
+  // SMN: ultima lectura correcta de la lista de alertas. SOHMA: "al dia" = ultima lectura correcta (aunque no haya PDF nuevo);
+  // si el ultimo PDF se leyo CON PROBLEMAS (no se actualizaron las novedades), cuenta desde que el SOHMA lo publico.
+  const fu = await sql`select fuente, ultimo_ok from public.estado_fuentes where fuente in ('smn_alertas', 'sohma')`;
+  const [pdf] = await sql`select ok, publicado, leido_en from public.sohma_pdfs order by leido_en desc limit 1`;
+  const okDe = (f: string) => { const x = fu.find((r) => r.fuente === f)?.ultimo_ok; return x ? new Date(x).getTime() : null; };
+  const sohmaAlDia = pdf && pdf.ok === false ? new Date(pdf.publicado ?? pdf.leido_en).getTime() : okDe("sohma");
   return { ahora, marea, viento: w ? { v: Number(w.viento_kn), g: w.rafaga_kn == null ? null : Number(w.rafaga_kn), ts: new Date(w.ts).getTime() } : null,
-    tramos, alertas, novedades, vis: visF.map((r) => ({ t: new Date(r.hora).getTime(), v: Number(r.v) })) };
+    tramos, alertas, novedades, vis: visF.map((r) => ({ t: new Date(r.hora).getTime(), v: Number(r.v) })),
+    visCorrida: vc?.c ? new Date(vc.c).getTime() : null, fuentes: { smnOk: okDe("smn_alertas"), sohmaAlDia } };
 }
 
 // ---------- robot ----------
 async function robot(prueba: boolean, datosPrueba: Datos | null) {
   const ahora = datosPrueba?.ahora ?? Date.now();
   const d = datosPrueba ?? await datosReales(ahora);
-  const cel = await sql`select id, endpoint, p256dh, auth, prefs from public.avisos_celulares where prueba = ${prueba}`;
+  // Los dados de baja por el servicio de avisos quedan 30 dias marcados, pero ya no reciben nada.
+  const cel = await sql`select id, endpoint, p256dh, auth, prefs from public.avisos_celulares where prueba = ${prueba} and baja_en is null`;
   const ids = cel.map((c) => c.id);
-  const est = ids.length ? await sql`select celular_id, tipo, activo, ultimo from public.avisos_estado where celular_id in ${sql(ids)}` : [];
+  const est = ids.length ? await sql`select celular_id, tipo, activo, ultimo, en_pausa from public.avisos_estado where celular_id in ${sql(ids)}` : [];
   const env = ids.length ? await sql`select celular_id, tipo, clave from public.avisos_enviados where celular_id in ${sql(ids)}` : [];
   const k = await claves();
   let enviados = 0, bajas = 0, fallas = 0;
-  const detalle: { celular: string; tipo: Tipo; ok: boolean }[] = [];
+  const detalle: { celular: string; tipo: string; ok: boolean }[] = [];
   for (const c of cel) {
     const estado: Partial<Record<Tipo, Estado | null>> = {};
-    for (const e of est.filter((e) => e.celular_id === c.id)) estado[e.tipo as Tipo] = { activo: e.activo, ultimo: e.ultimo ? new Date(e.ultimo).getTime() : null };
+    for (const e of est.filter((e) => e.celular_id === c.id)) estado[e.tipo as Tipo] = { activo: e.activo, ultimo: e.ultimo ? new Date(e.ultimo).getTime() : null, pausa: e.en_pausa };
     const ya = new Set(env.filter((e) => e.celular_id === c.id).map((e) => `${e.tipo}|${e.clave}`));
     const r = evaluar(d, c.prefs as Prefs, estado, ya);
-    let dadoDeBaja = false;
+    let dadoDeBaja: string | null = null;
     for (const m of r.mensajes) {
       try {
-        const res = await enviarPush(c, { titulo: m.titulo, cuerpo: m.cuerpo, ir: m.ir, tipo: m.tipo }, k, m.ttl);
+        const res = await enviarPush(c, { titulo: m.titulo, cuerpo: m.cuerpo, ir: m.ir, tipo: m.tipo, ...(m.silencioso ? { silencioso: true } : {}) }, k, m.ttl);
         detalle.push({ celular: c.id.slice(0, 8), tipo: m.tipo, ok: res.ok });
-        if (res.baja) { dadoDeBaja = true; break; }
+        await anotar({ celular: c.id, evento: "aviso", tipo: m.tipo, resultado: res.ok ? "aceptado" : "rechazado", detalle: res.ok ? null : motivoRechazo(res), prueba });
+        if (res.baja) { dadoDeBaja = `el servicio de avisos respondió ${res.estado}: la suscripción de este celular ya no existe`; break; }
         if (res.ok) enviados++; else fallas++;
-      } catch { fallas++; }
+      } catch (e) { fallas++; await anotar({ celular: c.id, evento: "aviso", tipo: m.tipo, resultado: "rechazado", detalle: `sin respuesta del servicio de avisos (${e instanceof Error ? e.message : e})`, prueba }); }
     }
-    if (dadoDeBaja) { await sql`delete from public.avisos_celulares where id = ${c.id}`; bajas++; continue; }
+    if (dadoDeBaja) { // ya NO se borra: queda marcado 30 dias (la app lo detecta y ofrece activar de nuevo)
+      await sql`update public.avisos_celulares set baja_en = now(), baja_motivo = ${dadoDeBaja} where id = ${c.id}`;
+      await anotar({ celular: c.id, evento: "baja_servicio", detalle: dadoDeBaja, prueba }); bajas++; continue;
+    }
     await sql.begin(async (tx) => {
       for (const m of r.marcar) await tx`insert into public.avisos_enviados (celular_id, tipo, clave) values (${c.id}, ${m.tipo}, ${m.clave}) on conflict do nothing`;
       for (const t of TIPOS) {
         if (!(t in r.estado)) continue;
         const s = r.estado[t];
         if (s === null) await tx`delete from public.avisos_estado where celular_id = ${c.id} and tipo = ${t}`;
-        else if (s) await tx`insert into public.avisos_estado (celular_id, tipo, activo, ultimo) values (${c.id}, ${t}, ${s.activo}, ${s.ultimo ? new Date(s.ultimo) : null})
-          on conflict (celular_id, tipo) do update set activo = excluded.activo, ultimo = excluded.ultimo`;
+        else if (s) await tx`insert into public.avisos_estado (celular_id, tipo, activo, ultimo, en_pausa) values (${c.id}, ${t}, ${s.activo}, ${s.ultimo ? new Date(s.ultimo) : null}, ${!!s.pausa})
+          on conflict (celular_id, tipo) do update set activo = excluded.activo, ultimo = excluded.ultimo, en_pausa = excluded.en_pausa`;
       }
       if (r.mensajes.length) await tx`update public.avisos_celulares set ultimo_envio = now(), fallas = 0 where id = ${c.id}`;
     });
@@ -123,20 +147,30 @@ async function ventanilla(req: Request) {
     const [c] = await sql`insert into public.avisos_celulares (endpoint, p256dh, auth, llave_hash, prefs, prueba)
       values (${p.endpoint}, ${p.p256dh}, ${p.auth}, ${await sha(llave)}, ${sql.json(p.prefs)}, ${p.prueba === true})
       on conflict (endpoint) do update set p256dh = excluded.p256dh, auth = excluded.auth, llave_hash = excluded.llave_hash, prefs = excluded.prefs,
-        prueba = excluded.prueba, actualizado_en = now(), fallas = 0 returning id`;
+        prueba = excluded.prueba, actualizado_en = now(), fallas = 0, baja_en = null, baja_motivo = null returning id`;
     await sql`delete from public.avisos_estado where celular_id = ${c.id}`; // arranca de cero (lo vigente no se avisa)
+    await anotar({ celular: c.id, evento: "alta", prueba: p.prueba === true });
     return json({ ok: true, llave });
   }
-  const [c] = await sql`select id, endpoint, p256dh, auth, llave_hash from public.avisos_celulares where endpoint = ${p.endpoint}`;
+  const [c] = await sql`select id, endpoint, p256dh, auth, llave_hash, prueba, baja_en, baja_motivo from public.avisos_celulares where endpoint = ${p.endpoint}`;
   if (!c || c.llave_hash !== await sha(p.llave)) return json({ error: "celular no anotado o llave incorrecta" }, 403);
+  if (p.accion === "baja") { await sql`delete from public.avisos_celulares where id = ${c.id}`; await anotar({ celular: c.id, evento: "baja_usuario", prueba: c.prueba }); return json({ ok: true }); }
+  // Dado de baja por el servicio de avisos: la app lo detecta (410) y ofrece activar de nuevo.
+  if (c.baja_en) return json({ error: "Los avisos de este celular se desactivaron: activalos de nuevo.", baja: true, cuando: new Date(c.baja_en).toISOString(), motivo: c.baja_motivo }, 410);
   if (p.accion === "actualizar") {
     await sql`update public.avisos_celulares set prefs = ${sql.json(p.prefs)}, actualizado_en = now() where id = ${c.id}`;
+    await anotar({ celular: c.id, evento: "actualizar", prueba: c.prueba });
     return json({ ok: true });
   }
-  if (p.accion === "baja") { await sql`delete from public.avisos_celulares where id = ${c.id}`; return json({ ok: true }); }
   // probar
   const r = await enviarPush(c, { titulo: "Tu Faro · Aviso de prueba", cuerpo: "Si ves esto, los avisos llegan a este celular.", ir: "ajustes", tipo: "prueba" }, await claves(), 600);
-  if (r.baja) { await sql`delete from public.avisos_celulares where id = ${c.id}`; return json({ error: "este celular ya no recibe avisos: activalos de nuevo" }, 410); }
+  await anotar({ celular: c.id, evento: "aviso", tipo: "prueba", resultado: r.ok ? "aceptado" : "rechazado", detalle: r.ok ? null : motivoRechazo(r), prueba: c.prueba });
+  if (r.baja) {
+    const motivo = `el servicio de avisos respondió ${r.estado}: la suscripción de este celular ya no existe`;
+    await sql`update public.avisos_celulares set baja_en = now(), baja_motivo = ${motivo} where id = ${c.id}`;
+    await anotar({ celular: c.id, evento: "baja_servicio", detalle: motivo, prueba: c.prueba });
+    return json({ error: "Los avisos de este celular se desactivaron: activalos de nuevo.", baja: true }, 410);
+  }
   return r.ok ? json({ ok: true }) : json({ error: `el servicio de avisos respondió ${r.estado}` }, 502);
 }
 

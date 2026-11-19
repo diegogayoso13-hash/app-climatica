@@ -2,7 +2,7 @@
 const SUPABASE_URL = "https://yoxioyszauoaqiwqrpae.supabase.co";
 const SUPABASE_KEY = "sb_publishable_vMJL1gkw0u3zBAbJODQNpw_TS0avBJi";
 const VIEJO_MIN = 20;              // minutos sin dato para considerar una lectura vieja
-const VERSION_APP = 25;            // tiene que ser igual a VERSION en sw.js
+const VERSION_APP = 26;            // tiene que ser igual a VERSION en sw.js
 const REFRESCO_MS = 2 * 60 * 1000; // se actualiza cada 2 minutos con la app abierta
 const TZ = "America/Montevideo";
 const raiz = document.getElementById("raiz");
@@ -166,30 +166,87 @@ function canalDatos(d) {
 // ---------- barra de arriba ----------
 function barra(d, cd, ag) {
   const carteles = [];
+  if (avisosDesactivados()) carteles.push(`<button type="button" class="cartel amarillo" data-reactivar-avisos="1">${ic("campana")}<span>${avCaido.motivo === "bloqueado"
+    ? "Tus avisos al celular se desactivaron: el celular bloqueó las notificaciones · Tocá para ver cómo habilitarlas" : "Tus avisos al celular se desactivaron · Tocá para activarlos de nuevo"}</span><span class="ir">${ic("chev")}</span></button>`);
+  const rob = robotAvisosCaido(d);
+  if (rob) carteles.push(`<button type="button" class="cartel amarillo" data-ir="sec-robot">${ic("alerta")}<span>Los avisos al celular pueden no estar funcionando · desde ${rob.desde ? fechaHoraCorta(rob.desde) : "hace mucho"}</span><span class="ir">${ic("chev")}</span></button>`);
   if (sinSenal) carteles.push(`<div class="cartel rojo">${ic("sinSenal")}<span>Sin señal – mostrando datos guardados de las ${fechaHora(sinSenal)} (${hace(sinSenal)}). Pueden estar viejos.</span></div>`);
   const al = d.alertas ?? [];
   if (al.length) carteles.push(`<button type="button" class="cartel rojo" data-ir="sec-alertas">${ic("alerta")}<span>${al.length === 1 ? "Alerta SMN vigente" : `${al.length} alertas SMN vigentes`}: ${esc([...new Set(al.map((a) => a.evento))].join(", "))}</span><span class="ir">${ic("chev")}</span></button>`);
   const n = cd.nuevas.size;
   if (n) carteles.push(`<button type="button" class="cartel azul" data-ir="sec-novedades">${ic("campana")}<span>${n} novedad${n > 1 ? "es" : ""} del canal</span><span class="ir">${ic("chev")}</span></button>`);
   const niebla = nieblaProxima(d.vis);
-  if (niebla) carteles.push(`<button type="button" class="cartel rojo" data-ir="sec-pron">${ic("alerta")}<span>Niebla prevista: menos de ${(VIS_ROJO / 1000).toLocaleString("es-UY")} km desde las ${hora(niebla)}</span><span class="ir">${ic("chev")}</span></button>`);
+  if (niebla) carteles.push(`<button type="button" class="cartel rojo" data-ir="sec-pron">${ic("alerta")}<span>Niebla prevista: menos de ${(VIS_ROJO / 1000).toLocaleString("es-UY")} km desde las ${hora(niebla)}${PZ.niebla ? " · pronóstico atrasado" : ""}</span><span class="ir">${ic("chev")}</span></button>`);
   const rojos = (ag?.filas ?? []).filter((f) => f.estado === "rojo");
   if (rojos.length) carteles.push(`<button type="button" class="cartel rojo" data-ir="sec-resumen">${ic("alerta")}<span>${rojos.length === 1 ? `Tramo en rojo: ${esc(rojos[0].t.nombre)}` : `${rojos.length} tramos en rojo`} · quedan ${m2(Math.min(...rojos.map((f) => f.quilla)))} m bajo la quilla</span><span class="ir">${ic("chev")}</span></button>`);
   if (relevNuevo(d)) carteles.push(`<button type="button" class="cartel azul" data-ir="sec-agua">${ic("campana")}<span>La CARP publicó un relevamiento nuevo</span><span class="ir">${ic("chev")}</span></button>`);
   return `<header class="barra"><div class="barra-fila"><div class="marca">${ic("faro")}Tu Faro</div><span class="act">${sinSenal ? "Sin señal" : `Act. ${hora(Date.now())}`}</span></div>${carteles.join("")}</header>`;
 }
 
+// ---------- avisos en pausa (MISMOS cortes y textos que el robot: supabase/functions/avisos/evaluar.ts, pausas()) ----------
+const PAUSA_MS = 60 * 60000, PAUSA_NIEBLA_MS = 18 * 3600e3, PAUSA_SMN_MS = 60 * 60000, PAUSA_CANAL_MS = 3 * 3600e3;
+const ROBOT_AVISOS_MIN = 15; // el robot de avisos corre cada 5 min: con 15 min sin correr, algo anda mal
+const fDM = new Intl.DateTimeFormat("es-UY", { timeZone: TZ, day: "numeric", month: "numeric" });
+const fechaHoraCorta = (t) => `${hora(t)}${Date.now() - t > 20 * 3600e3 ? ` del ${fDM.format(new Date(t))}` : ""}`;
+const unirY = (xs) => xs.length <= 1 ? xs.join("") : `${xs.slice(0, -1).join(", ")} y ${xs.at(-1)}`;
+function pausasDatos(d, ahora = Date.now()) {
+  const ix = indexar(d.ultimas ?? []), out = {};
+  const ts = (x) => x ? new Date(x).getTime() : null;
+  const viejo = (t, lim) => t == null || ahora - t > lim;
+  const desde = (t) => t == null ? "sin datos" : `desde las ${hora(t)}${ahora - t > 20 * 3600e3 ? ` del ${fDM.format(new Date(t))}` : ""}`;
+  const mareaTs = (e) => ts(ix[e]?.marea?.[0]?.ts);
+  const tv = ts(ix.norden?.viento?.[0]?.ts), tm = mareaTs("norden");
+  if (viejo(tv, PAUSA_MS)) out.viento = { desde: tv, texto: `Norden sin viento ${desde(tv)}` };
+  if (viejo(tm, PAUSA_MS)) out.marea = { desde: tm, texto: `Norden sin marea ${desde(tm)}` };
+  const tramos = d.tramos ?? [], sin = tramos.filter((t) => [t.estacion_1, t.estacion_2].every((e) => viejo(mareaTs(e), PAUSA_MS)));
+  if (sin.length) {
+    const xs = sin.flatMap((t) => [mareaTs(t.estacion_1), mareaTs(t.estacion_2)]).filter((x) => x != null), dd = xs.length ? Math.max(...xs) : null;
+    out.tramo = { desde: dd, texto: `${sin.length === tramos.length ? "todos los tramos" : unirY(sin.map((t) => t.nombre))} sin marea ${desde(dd)}` };
+  }
+  const corr = (d.vis ?? []).map((f) => ts(f.corrida)).filter((x) => x != null), vc = corr.length ? Math.max(...corr) : null;
+  if (viejo(vc, PAUSA_NIEBLA_MS)) out.niebla = { desde: vc, texto: vc == null ? "sin pronóstico de visibilidad" : `pronóstico de visibilidad atrasado (corrida de las ${hora(vc)} del ${fDM.format(new Date(vc))})` };
+  const ok = (f) => ts((d.fuentes ?? []).find((x) => x.fuente === f)?.ultimo_ok);
+  const smn = ok("smn_alertas");
+  if (viejo(smn, PAUSA_SMN_MS)) out.smn = { desde: smn, texto: `no se pudieron leer ${desde(smn)}` };
+  const pdf = (d.pdfs ?? [])[0], sohma = pdf && pdf.ok === false ? ts(pdf.publicado ?? pdf.leido_en) : ok("sohma");
+  if (viejo(sohma, PAUSA_CANAL_MS)) out.canal = { desde: sohma, texto: `no se pudo leer el aviso del SOHMA ${desde(sohma)}` };
+  return out;
+}
+let PZ = {}; // pausas de la ultima actualizacion
+const NOMBRE_AV = { viento: "viento", marea: "marea", tramo: "tramo en rojo", niebla: "niebla", smn: "alertas del SMN", canal: "novedades del canal" };
+// Prendido Y usable (marea necesita el minimo; tramo, el calado): si no se puede usar, no tiene sentido decir "en pausa".
+const avisoPrendido = (t) => typeof avReg !== "undefined" && !!avReg && !!avCfg?.avisos?.[t] && !(t === "marea" && lim.rioMin == null) && !(t === "tramo" && aguaAj.calado == null);
+const pausaNota = (t) => avisoPrendido(t) && PZ[t] ? `<p class="aviso-pausa">${ic("alerta")}<span><strong>Tu aviso de ${NOMBRE_AV[t]} al celular está en pausa:</strong> ${esc(PZ[t].texto)}.</span></p>` : "";
+// Robot de avisos: si lleva mas de 15 min sin correr bien, ningun aviso llega (ni el de "en pausa"). Solo importa si este celular tiene avisos.
+function robotAvisosCaido(d) {
+  if (typeof avReg === "undefined" || !avReg) return null;
+  const f = (d.fuentes ?? []).find((x) => x.fuente === "avisos"), t = f?.ultimo_ok ? new Date(f.ultimo_ok).getTime() : null;
+  return t == null || Date.now() - t > ROBOT_AVISOS_MIN * 60000 ? { desde: t } : null;
+}
+// Resumen del Canal: cuando Norden no tiene viento, un renglon que lo dice (y la otra estacion, rotulada).
+function vientoResumen(ix) {
+  const [w] = ix.norden?.viento ?? [];
+  if (w && !esViejo(w.ts)) return "";
+  const [a] = ix.colonia_armada?.viento ?? [];
+  return `<button type="button" class="ir-renglon" data-ir="sec-norden">${ic("alerta")}<span>Viento: Norden sin dato ${w ? `desde las ${hora(w.ts)}` : "reciente"} · ${a && !esViejo(a.ts) ? `Armada Colonia (en tierra) ${n1(a.viento_kn)} kn` : "Armada Colonia también sin dato"}</span>${ic("chev")}</button>`;
+}
+function pintarPausasAjustes() {
+  for (const el of document.querySelectorAll("[data-pausa]")) {
+    const t = el.dataset.pausa, ver = avisoPrendido(t) && !!PZ[t];
+    el.hidden = !ver; el.textContent = ver ? `En pausa: ${PZ[t].texto}` : "";
+  }
+}
+
 // ---------- Norden ----------
 function norden(ix, pron6) {
   const [w, wA] = ix.norden?.viento ?? [], [m, mA] = ix.norden?.marea ?? [];
   const viejo = esViejo(w?.ts);
-  // Respaldo en un recuadro aparte: Colonia (CARP) y, si tambien esta vieja, Colonia (Armada).
+  // Sin viento de Norden: se muestra OTRA estacion (Armada, Colonia), bien rotulada y sin colores de limites. Nunca se usa para avisos.
   let respaldo = "";
   if (viejo) {
-    const [c] = ix.colonia?.viento ?? [], [a] = ix.colonia_armada?.viento ?? [];
-    respaldo = !esViejo(c?.ts) ? `<div class="respaldo"><strong>Respaldo: Colonia (CARP)</strong> · ${hora(c.ts)}<br>${n1(c.viento_kn)} kn · ráfaga ${n1(c.rafaga_kn)} kn · ${flecha(c.dir_grados)} ${dirTexto(c.dir_grados)}</div>`
-      : !esViejo(a?.ts) ? `<div class="respaldo"><strong>Respaldo: Colonia (Armada, en tierra, sin ráfagas)</strong> · ${hora(a.ts)}<br>${n1(a.viento_kn)} kn · ${flecha(a.dir_grados)} ${dirTexto(a.dir_grados)}</div>`
-      : `<div class="respaldo">Sin respaldo reciente: Colonia (CARP) y Colonia (Armada) también sin dato nuevo.</div>`;
+    const [a] = ix.colonia_armada?.viento ?? [];
+    respaldo = !esViejo(a?.ts) ? `<div class="respaldo"><strong>Otra estación: Armada, Colonia</strong> (en tierra, a ~20 km de Norden) · solo viento medio, sin ráfagas · ${hora(a.ts)}<br><span class="resp-val">${n1(a.viento_kn)} kn · ${flecha(a.dir_grados)} ${dirTexto(a.dir_grados)}</span></div>`
+      : `<div class="respaldo">Otra estación: Armada, Colonia (en tierra) también sin dato nuevo.</div>`;
   }
   // Que decia el pronostico (hecho 6 h antes) para la hora de la ultima lectura.
   const ph = porHora(pron6), ref = w && !viejo ? new Date(w.ts).getTime() : Date.now();
@@ -204,6 +261,7 @@ function norden(ix, pron6) {
   return `<section class="tarjeta" id="sec-norden">
     <h2 class="titulo">Pilote Norden <span>${w ? `${hora(w.ts)} · ${hace(w.ts)}` : "sin datos de viento"}</span></h2>
     ${viejo ? `<div class="aviso-viejo">${ic("alerta")}Norden sin dato nuevo desde ${w ? `${hora(w.ts)} (${hace(w.ts)})` : "hace mucho"}</div>` : ""}
+    ${pausaNota("viento")}${pausaNota("marea")}
     <div class="datos ${viejo ? "viejo" : ""}">
       <div class="dato ${viejo ? "" : limV(w?.viento_kn)}"><div class="et">Viento medio</div><div class="val">${n1(w?.viento_kn)}<span class="u">kn</span>${tend(w?.viento_kn, wA?.viento_kn, 0.5)}</div></div>
       <div class="dato ${viejo ? "" : limG(w?.rafaga_kn)}"><div class="et">Ráfaga</div><div class="val">${n1(w?.rafaga_kn)}<span class="u">kn</span>${tend(w?.rafaga_kn, wA?.rafaga_kn, 0.5)}</div></div>
@@ -369,7 +427,7 @@ function canalAgua(d, ix, aj, cd) {
   const nb = cd?.balizas.length ?? 0, nr = cd?.radio.length ?? 0;
   const resumen = `<section class="tarjeta" id="sec-resumen">
     <h2 class="titulo">Resumen <span>${sinCal ? "sin calado" : `calado ${m2(c.calado)} m${aj.unidad === "ft" ? ` (${n1(aj.calado)} ft)` : ""} · margen ${m2(c.margen)}`}</span></h2>
-    ${crit}${tend}
+    ${crit}${tend}${vientoResumen(ix)}${pausaNota("tramo")}
     ${cd ? `<button type="button" class="ir-renglon" data-ir="sec-novedades">${ic("campana")}<span>${nb} baliza${nb === 1 ? "" : "s"} con novedad · ${nr} radioaviso${nr === 1 ? "" : "s"}${cd.nuevas.size ? ' <span class="punto"></span>' : ""}</span>${ic("chev")}</button>` : ""}
     ${sinCal ? `<button type="button" class="cargar-calado" data-abrir-ajustes="1">${ic("engranaje")}Cargá tu calado</button>` : ""}
   </section>`;
@@ -405,7 +463,7 @@ function canalAgua(d, ix, aj, cd) {
   }).join("");
   const relevs = [...new Set(tramos.map((t) => t.relevamiento))].join(", ");
   const tramosHtml = `<section class="tarjeta" id="sec-agua">
-    <h2 class="titulo">Agua por tramo <span>${sinCal ? "metros de agua" : "agua · bajo la quilla (m)"}</span></h2>
+    <h2 class="titulo">Agua por tramo <span>${sinCal ? "metros de agua" : "agua · bajo la quilla (m)"}</span></h2>${pausaNota("tramo")}
     ${relevNuevo(d) ? `<div class="ya-lo-vi"><span class="nota" style="margin:0"><strong>La CARP publicó un relevamiento nuevo</strong> (${esc(relevs)}). La tabla ya está actualizada.</span><button type="button" class="primario" id="btn-relev-visto">Visto</button></div>` : ""}
     ${avisosEst}
     <div class="tramos">${filas}</div>
@@ -664,7 +722,7 @@ function pronostico(filas, config, vis) {
   return `<section class="tarjeta" id="sec-pron">
     <h2 class="titulo">Pronóstico <span>próximas 24 h · ${esc(punto?.nombre ?? "Norden")}</span></h2>
     ${tiraHoras(prox, true)}
-    <p class="nota nota-vis">${sinVis ? "<strong>Visibilidad: sin dato.</strong>" : "Visibilidad pronosticada, no medida"}${atrasadas.length ? ` · <span class="corrida-vieja">${atrasadas.join(" y ")} atrasada${atrasadas.length > 1 ? "s" : ""}</span>` : ""} ${info("vis", corrVis)}</p>
+    ${pausaNota("niebla")}<p class="nota nota-vis">${sinVis ? "<strong>Visibilidad: sin dato.</strong>" : "Visibilidad pronosticada, no medida"}${atrasadas.length ? ` · <span class="corrida-vieja">${atrasadas.join(" y ")} atrasada${atrasadas.length > 1 ? "s" : ""}</span>` : ""} ${info("vis", corrVis)}</p>
     <div class="dias">${filasDia}</div>
     <p class="nota">Promedio de los modelos · ${corridas.join(" · ")} ${info("pronostico")}</p>
   </section>`;
@@ -789,7 +847,7 @@ function canal(d, cd) {
     <h3 class="sub">Balizamiento (${cd.balizas.length})</h3>${cd.balizas.map((n) => fila(n)).join("") || `<p class="nota" style="margin-top:0">Sin novedades de balizamiento en el canal.</p>`}
     <details class="normalizadas" data-clave="normalizadas"><summary><h3 class="sub">Normalizadas en los últimos 7 días (${cd.normalizadas.length})</h3>${ic("chev")}</summary>${cd.normalizadas.map((n) => fila(n, true)).join("") || `<p class="nota" style="margin-top:0">Ninguna.</p>`}</details>`;
   const res = `${cd.nuevas.size ? '<span class="punto"></span> ' : ""}${cd.radio.length} radioaviso${cd.radio.length === 1 ? "" : "s"} · ${cd.balizas.length} baliza${cd.balizas.length === 1 ? "" : "s"}`;
-  return `<section class="tarjeta ${cd.radioNuevo ? "marcada" : ""}" id="sec-novedades"><h2 class="titulo">Novedades del canal <span>${res}</span></h2>${cuerpo}</section>`;
+  return `<section class="tarjeta ${cd.radioNuevo ? "marcada" : ""}" id="sec-novedades"><h2 class="titulo">Novedades del canal <span>${res}</span></h2>${pausaNota("canal")}${cuerpo}</section>`;
 }
 
 const SEVERIDAD = { Minor: ["menor", "--l-amarillo"], Moderate: ["moderada", "--l-amarillo"], Severe: ["severa", "--l-naranja"], Extreme: ["extrema", "--l-rojo"] };
@@ -802,7 +860,7 @@ function alertasSec(d) {
       <div class="nota" style="margin:0 0 4px">Afecta: ${esc(donde)} · desde ${fechaHora(a.desde)} hasta ${fechaHora(a.hasta)}</div><div>${esc(a.descripcion ?? "")}</div></div>`;
   }).join("");
   return plegable("sec-alertas", "Alertas SMN", al.length ? `${al.length} vigente${al.length > 1 ? "s" : ""}` : "sin alertas",
-    (html || `<p class="nota" style="margin-top:0">Sin alertas vigentes para Norden ni para la Isla Martín García.</p>`) + (pend > 0 ? `<p class="nota">Todavía revisando avisos del SMN (faltan ${pend}).</p>` : ""));
+    pausaNota("smn") + (html || `<p class="nota" style="margin-top:0">Sin alertas vigentes para Norden ni para la Isla Martín García.</p>`) + (pend > 0 ? `<p class="nota">Todavía revisando avisos del SMN (faltan ${pend}).</p>` : ""));
 }
 
 function realVsPron(d) {
@@ -832,7 +890,7 @@ function realVsPron(d) {
 
 const NOMBRE_FUENTE = { carp: "CARP (4 estaciones)", armada_colonia: "Armada Colonia", open_meteo: "Open-Meteo", smn_alertas: "Alertas SMN", sohma: "Avisos SOHMA (cada hora)", carp_tramos: "Tabla de tramos CARP (lunes 9 h)", visibilidad: "Visibilidad (Open-Meteo: ECMWF 9 km y GFS)", comparar_marea: "Comparación de marea SHN / PronUy (prueba)", avisos: "Robot de avisos al celular (cada 5 min)" };
 // Cuanto puede pasar sin lectura buena antes de marcar problema (minutos).
-const PLAZO_FUENTE = { sohma: 90, carp_tramos: 8 * 24 * 60, comparar_marea: 120 };
+const PLAZO_FUENTE = { sohma: 90, carp_tramos: 8 * 24 * 60, comparar_marea: 120, avisos: ROBOT_AVISOS_MIN };
 // Renglon de la comparacion de marea (robot de prueba de 4 semanas). PronUy caido es solo una nota: no pone rojo.
 const conSigno = (x) => x == null ? "–" : `${x > 0 ? "+" : x < 0 ? "−" : ""}${m2(Math.abs(x))}`;
 function resumenComparacion(d) {
@@ -894,6 +952,7 @@ function render(d) {
   const abiertosAhora = new Set([...raiz.querySelectorAll("details[data-clave][open]")].map((x) => x.dataset.clave));
   const cerradosAhora = new Set([...raiz.querySelectorAll("details.radioaviso[data-clave]:not([open])")].map((x) => x.dataset.clave));
   const ix = indexar(d.ultimas ?? []);
+  PZ = pausasDatos(d);
   const nombre = Object.fromEntries((d.estaciones ?? []).map((e) => [e.id, e.nombre]));
   const cd = canalDatos(d);
   const ag = canalAgua(d, ix, aguaAj, cd);
@@ -905,6 +964,7 @@ function render(d) {
     <div class="pestana" data-p="mas"><div id="hueco-ajustes"></div>${robot(d)}${fuentesSec()}</div></main>
     <nav class="pestanas" aria-label="Secciones">${PESTANAS.map(([p, n]) => `<button type="button" data-pestana="${p}" aria-current="${p === pestana ? "page" : "false"}">${ic(p)}<span>${n}</span>${p === "mas" && robotMal ? '<i class="punto-mas" title="El robot tiene un problema"></i>' : ""}</button>`).join("")}</nav>`;
   raiz.querySelector("#hueco-ajustes").replaceWith(ajustesNodo);
+  pintarPausasAjustes();
   verPestana(pestana, { arriba: false });
   if (typeof dibujarMapa === "function" && document.getElementById("panel-mapa") && !document.getElementById("panel-mapa").hidden) dibujarMapa(d);
   for (const el of raiz.querySelectorAll("details[data-clave]")) {
@@ -922,6 +982,8 @@ raiz.addEventListener("toggle", (ev) => {
   guardarLocal("secciones_abiertas", [...abiertas]);
 }, true);
 raiz.addEventListener("click", (ev) => {
+  const reac = ev.target.closest("[data-reactivar-avisos]");
+  if (reac) { reactivarAvisos(); return; }
   const b = ev.target.closest("button, [data-ir]");
   if (!b) return;
   if (b.dataset.marea) { mareaExtra = mareaExtra === b.dataset.marea ? null : b.dataset.marea; guardarLocal("marea_extra", mareaExtra); render(ultimos); return; }
@@ -1007,6 +1069,16 @@ const TIPOS_AVISO = ["smn", "canal", "niebla", "marea", "tramo", "viento"];
 const AV_DEFECTO = { avisos: Object.fromEntries(TIPOS_AVISO.map((t) => [t, false])), nivelViento: "rojo", silencio: null };
 let avCfg = { ...AV_DEFECTO, ...(leerLocal("avisos_cfg") ?? {}) };
 let avReg = leerLocal("avisos_reg"); // { endpoint, llave } si este celular esta anotado
+// Lo que ELIGIO la persona: se borra solo con "Desactivar avisos". Si quiere avisos y el celular ya no esta anotado,
+// la app lo dice ("Tus avisos al celular se desactivaron") en vez de apagarlos en silencio.
+let avQuiere = leerLocal("avisos_quiere") ?? (avReg ? true : false); if (avReg) guardarLocal("avisos_quiere", true);
+let avCaido = leerLocal("avisos_caidos"); // { motivo: "bloqueado" | "sin_suscripcion" | "servicio", desde }
+function avisosSeCayeron(motivo) {
+  avReg = null; guardarLocal("avisos_reg", null);
+  if (avQuiere) { avCaido = { motivo, desde: avCaido?.desde ?? new Date().toISOString() }; guardarLocal("avisos_caidos", avCaido); }
+  if (ultimos) render(ultimos);
+}
+const avisosDesactivados = () => avQuiere && !avReg && !!avCaido && soportaPush();
 const esIOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 const instalada = () => matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
 const soportaPush = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
@@ -1036,6 +1108,8 @@ function pintarAvisos() {
   else if (ios && !anotado) avMsj("");
   else if (anotado && Notification.permission === "denied") avMsj("Los avisos están bloqueados en este celular. Habilitalos en los ajustes del celular (ver \"¿No te llegan?\").", true);
   else if (anotado) avMsj(`Avisos activados en este celular${enCompu ? " (modo prueba: solo recibe avisos de prueba)" : ""}.`);
+  else if (avisosDesactivados()) avMsj(avCaido.motivo === "bloqueado" ? "Tus avisos se desactivaron: el celular bloqueó las notificaciones de Tu Faro. Habilitalas en los ajustes del celular (ver \"¿No te llegan?\") y tocá \"Activar avisos\"."
+    : `Tus avisos se desactivaron solos${avCaido.motivo === "servicio" ? " (el servicio de avisos dijo que la suscripción de este celular ya no existe)" : " (el celular borró la suscripción)"}. Tocá "Activar avisos": quedan las mismas opciones que tenías.`, true);
   else if (!avEl("av-estado").classList.contains("error-form")) avMsj("Apagados. Tocá \"Activar avisos\" para elegir cuáles querés.");
   for (const c of document.querySelectorAll("[data-av]")) c.checked = !!avCfg.avisos[c.dataset.av];
   const sinMin = lim.rioMin == null, sinCal = aguaAj.calado == null;
@@ -1044,6 +1118,7 @@ function pintarAvisos() {
   avEl("av-marea-nota").textContent = sinMin ? "primero cargá tu mínimo en \"Altura del río\" (arriba)" : `avisa si Norden baja de ${m2(lim.rioMin)} m`;
   avEl("av-tramo-nota").textContent = sinCal ? "primero cargá el calado en \"Mi buque\" (arriba)" : `con calado ${m2(caladoM(aguaAj))} m y margen ${m2(Math.max(MARGEN_MIN, aguaAj.margen))} m`;
   avEl("av-nivel").value = avCfg.nivelViento;
+  pintarPausasAjustes();
   avEl("av-sil").checked = !!avCfg.silencio; avEl("av-horas").hidden = !avCfg.silencio;
   if (avCfg.silencio) { avEl("av-desde").value = avCfg.silencio.desde; avEl("av-hasta").value = avCfg.silencio.hasta; }
 }
@@ -1057,6 +1132,8 @@ async function altaAvisos(sub) {
   const r = await llamarAvisos({ accion: "alta", endpoint: j.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth, prefs: prefsAvisos(), ...(enCompu ? { prueba: true } : {}) });
   if (!r.ok) throw new Error(r.error ?? `error ${r.estado}`);
   avReg = { endpoint: j.endpoint, llave: r.llave }; guardarLocal("avisos_reg", avReg);
+  avQuiere = true; guardarLocal("avisos_quiere", true); avCaido = null; guardarLocal("avisos_caidos", null);
+  if (ultimos) render(ultimos);
 }
 async function activarAvisos() {
   const b = avEl("btn-av-activar"); b.disabled = true;
@@ -1072,13 +1149,20 @@ async function activarAvisos() {
   b.disabled = false; pintarAvisos();
 }
 let avTimer = null;
+// Cartel "Tus avisos al celular se desactivaron": con un toque se vuelven a activar con las MISMAS opciones de antes.
+async function reactivarAvisos() {
+  irA("avisos");
+  if (Notification.permission === "denied") { const ay = document.querySelector(".av-ayuda"); if (ay) ay.open = true; avMsj("El celular bloqueó las notificaciones de Tu Faro. Habilitalas en los ajustes del celular (ver \"¿No te llegan?\") y tocá \"Activar avisos\".", true); return; }
+  await activarAvisos();
+}
 function sincronizarAvisos() { // al cambiar algo, se actualiza en Supabase (con una pausita para juntar cambios)
   if (!avReg) return;
   clearTimeout(avTimer);
   avTimer = setTimeout(async () => {
     try {
       const r = await llamarAvisos({ accion: "actualizar", endpoint: avReg.endpoint, llave: avReg.llave, prefs: prefsAvisos() });
-      if (r.estado === 403) { const { sub } = await suscripcion(); if (sub) await altaAvisos(sub); else { avReg = null; guardarLocal("avisos_reg", null); } }
+      if (r.estado === 410) { const { sub } = await suscripcion(); await sub?.unsubscribe().catch(() => {}); avisosSeCayeron("servicio"); }
+      else if (r.estado === 403) { const { sub } = await suscripcion(); if (sub) await altaAvisos(sub); else avisosSeCayeron("sin_suscripcion"); }
       else if (!r.ok) throw new Error(r.error);
       pintarAvisos();
     } catch (e) { avMsj(`No se pudo guardar el cambio en el servidor (${e.message ?? "sin conexión"}). Se reintenta al abrir la app.`, true); }
@@ -1096,7 +1180,7 @@ avEl("btn-av-probar").addEventListener("click", async (ev) => {
   ev.target.disabled = true; avMsj("Mandando un aviso de prueba…");
   try {
     const r = await llamarAvisos({ accion: "probar", endpoint: avReg.endpoint, llave: avReg.llave });
-    if (r.estado === 410 || r.estado === 403) { avReg = null; guardarLocal("avisos_reg", null); throw new Error(r.error ?? "Este celular ya no está anotado: activá los avisos de nuevo."); }
+    if (r.estado === 410 || r.estado === 403) { if (r.estado === 410) { const { sub } = await suscripcion(); await sub?.unsubscribe().catch(() => {}); } avisosSeCayeron(r.estado === 410 ? "servicio" : "sin_suscripcion"); throw new Error(r.error ?? "Este celular ya no está anotado: activá los avisos de nuevo."); }
     if (!r.ok) throw new Error(r.error);
     avMsj("Aviso de prueba enviado: debería llegar en unos segundos.");
   } catch (e) { avMsj(e.message ?? "No se pudo mandar.", true); }
@@ -1107,14 +1191,15 @@ avEl("btn-av-baja").addEventListener("click", async (ev) => {
   try { await llamarAvisos({ accion: "baja", endpoint: avReg.endpoint, llave: avReg.llave }); } catch { /* si no hay conexion, igual se borra solo cuando el robot vea que no existe */ }
   try { const { sub } = await suscripcion(); await sub?.unsubscribe(); } catch { /* nada */ }
   avReg = null; guardarLocal("avisos_reg", null); avCfg = { ...AV_DEFECTO }; guardarLocal("avisos_cfg", avCfg);
-  ev.target.disabled = false; avMsj("Avisos desactivados en este celular."); pintarAvisos();
+  avQuiere = false; guardarLocal("avisos_quiere", false); avCaido = null; guardarLocal("avisos_caidos", null); // desactivado A PROPOSITO: sin cartel
+  ev.target.disabled = false; avMsj("Avisos desactivados en este celular."); pintarAvisos(); if (ultimos) render(ultimos);
 });
 // Al abrir: si el navegador cambio la suscripcion (o la borro), se vuelve a anotar o se olvida.
 async function revisarSuscripcion() {
   if (!avReg || !soportaPush()) return;
   try {
     const { sub } = await suscripcion();
-    if (!sub || Notification.permission !== "granted") { avReg = null; guardarLocal("avisos_reg", null); }
+    if (!sub || Notification.permission !== "granted") avisosSeCayeron(Notification.permission === "denied" ? "bloqueado" : "sin_suscripcion"); // antes: se apagaban en silencio
     else if (sub.endpoint !== avReg.endpoint) await altaAvisos(sub);
     else sincronizarAvisos();
   } catch { /* sin conexion: se reintenta la proxima vez */ }
