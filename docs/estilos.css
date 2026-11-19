@@ -430,3 +430,20 @@ html.con-mapa body { overflow: hidden; }
 .app[data-tema="noche"] .yo-punto { background: #ff6b5b; box-shadow: 0 0 0 2px #ff6b5b; }
 .app[data-tema="noche"] .leaflet-control-zoom a, .app[data-tema="noche"] .leaflet-control-attribution { background: #0e0303; color: #ff6b5b; }
 .app[data-tema="noche"] .fondeo-et, .app[data-tema="noche"] .btn-gps { filter: grayscale(1) sepia(1) hue-rotate(-50deg) saturate(5) brightness(.9); }
+
+/* Avisos al celular (dentro de Ajustes) */
+.app .avisos-cel { border-top: 1px solid var(--borde); margin-top: 16px; padding-top: 4px; }
+.app .avisos-cel .av-op { justify-content: flex-start; gap: 12px; padding: 6px 0; min-height: 48px; }
+.app .avisos-cel .av-op input { flex: none; }
+.app .avisos-cel .av-op span { display: flex; flex-direction: column; }
+.app .avisos-cel .av-op small { color: var(--suave); font-size: .8rem; }
+.app .avisos-cel .av-op input:disabled + span { opacity: .55; }
+.app .avisos-cel select, .app .avisos-cel input[type="time"] { font: 1rem Roboto, system-ui, sans-serif; min-height: 44px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--borde); background: var(--fondo); color: var(--texto); }
+.app .avisos-cel .av-horas { display: flex; gap: 12px; padding-left: 36px; flex-wrap: wrap; }
+.app .avisos-cel .av-horas label { gap: 8px; justify-content: flex-start; }
+.app .avisos-cel .av-pasos, .app .avisos-cel .av-ayuda { font-size: .9rem; }
+.app .avisos-cel .av-pasos { border-left: 4px solid var(--acento); padding: 4px 10px; border-radius: 6px; background: color-mix(in srgb, var(--acento) 8%, transparent); }
+.app .avisos-cel ol { padding-left: 20px; margin: 4px 0 8px; }
+.app .avisos-cel .av-ayuda summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; color: var(--acento); }
+.app .avisos-cel .av-resp { border-left: 4px solid var(--l-amarillo); padding: 6px 10px; border-radius: 6px; background: color-mix(in srgb, var(--l-amarillo) 10%, transparent); }
+.app .avisos-cel [hidden] { display: none !important; }

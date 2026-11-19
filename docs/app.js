@@ -200,7 +200,7 @@ function norden(ix, pron6) {
       (dd == null ? "<strong>Real:</strong> sin dato nuevo de Norden" : `<strong>Real: ${n1(w.viento_kn)} kn</strong> (${Math.abs(dd) < 0.5 ? "igual a lo pronosticado" : `${n1(Math.abs(dd))} ${dd > 0 ? "más" : "menos"} que lo pronosticado`})`) +
       ` · ${p.n} de 3 modelos`;
   }
-  return `<section class="tarjeta">
+  return `<section class="tarjeta" id="sec-norden">
     <h2 class="titulo">Pilote Norden <span>${w ? `${hora(w.ts)} · ${hace(w.ts)}` : "sin datos de viento"}</span></h2>
     ${viejo ? `<div class="aviso-viejo">${ic("alerta")}Norden sin dato nuevo desde ${w ? `${hora(w.ts)} (${hace(w.ts)})` : "hace mucho"}</div>` : ""}
     <div class="datos ${viejo ? "viejo" : ""}">
@@ -818,7 +818,7 @@ function realVsPron(d) {
     <h3 class="sub">¿Qué modelo acierta más en Norden?</h3>${ranking}`);
 }
 
-const NOMBRE_FUENTE = { carp: "CARP (4 estaciones)", armada_colonia: "Armada Colonia", open_meteo: "Open-Meteo", smn_alertas: "Alertas SMN", sohma: "Avisos SOHMA (cada hora)", carp_tramos: "Tabla de tramos CARP (lunes 9 h)", visibilidad: "Visibilidad (Open-Meteo: ECMWF 9 km y GFS)", comparar_marea: "Comparación de marea SHN / PronUy (prueba)" };
+const NOMBRE_FUENTE = { carp: "CARP (4 estaciones)", armada_colonia: "Armada Colonia", open_meteo: "Open-Meteo", smn_alertas: "Alertas SMN", sohma: "Avisos SOHMA (cada hora)", carp_tramos: "Tabla de tramos CARP (lunes 9 h)", visibilidad: "Visibilidad (Open-Meteo: ECMWF 9 km y GFS)", comparar_marea: "Comparación de marea SHN / PronUy (prueba)", avisos: "Robot de avisos al celular (cada 5 min)" };
 // Cuanto puede pasar sin lectura buena antes de marcar problema (minutos).
 const PLAZO_FUENTE = { sohma: 90, carp_tramos: 8 * 24 * 60, comparar_marea: 120 };
 // Renglon de la comparacion de marea (robot de prueba de 4 semanas). PronUy caido es solo una nota: no pone rojo.
@@ -846,7 +846,7 @@ function robot(d) {
   const mal = malFuente;
   const malas = f.filter(mal).length;
   return plegable("sec-robot", "Estado del robot", malas ? `${malas} con problemas` : "todo en orden",
-    `<ul class="fuentes">${f.map((x) => `<li><span class="${mal(x) ? "mal" : "ok"}">${ic(mal(x) ? "alerta" : "ok")}</span><span>${esc(NOMBRE_FUENTE[x.fuente] ?? x.fuente)}: ${x.ultimo_ok ? `leída ${hora(x.ultimo_ok)}` : "nunca"}${x.ultimo_error && (!x.ultimo_ok || x.ultimo_error > x.ultimo_ok) ? ` — error: ${esc(x.mensaje_error)}` : ""}${x.fuente === "comparar_marea" && x.detalle ? `<small class="det-fuente">${esc(resumenComparacion(x.detalle))}</small>` : ""}</span></li>`).join("")}</ul>`);
+    `<ul class="fuentes">${f.map((x) => `<li><span class="${mal(x) ? "mal" : "ok"}">${ic(mal(x) ? "alerta" : "ok")}</span><span>${esc(NOMBRE_FUENTE[x.fuente] ?? x.fuente)}: ${x.ultimo_ok ? `leída ${hora(x.ultimo_ok)}` : "nunca"}${x.ultimo_error && (!x.ultimo_ok || x.ultimo_error > x.ultimo_ok) ? ` — error: ${esc(x.mensaje_error)}` : ""}${x.fuente === "comparar_marea" && x.detalle ? `<small class="det-fuente">${esc(resumenComparacion(x.detalle))}</small>` : ""}${x.fuente === "avisos" && x.detalle ? `<small class="det-fuente">${x.detalle.celulares} celular${x.detalle.celulares === 1 ? "" : "es"} anotado${x.detalle.celulares === 1 ? "" : "s"}</small>` : ""}</span></li>`).join("")}</ul>`);
 }
 
 function fuentesSec() {
@@ -982,8 +982,139 @@ form.addEventListener("submit", (ev) => {
   colorBarraCelular();
   guardado.hidden = false; setTimeout(() => { guardado.hidden = true; }, 2500);
   if (ultimos) render(ultimos);
+  pintarAvisos(); sincronizarAvisos(); // el robot de avisos usa el calado, el minimo y los limites de este celular
 });
 cargarAjustes();
+
+// ---------- avisos al celular (web push, sin cuenta) ----------
+// El celular se anota en la funcion "avisos" de Supabase con una llave al azar que solo guarda el celular.
+// Las tablas de avisos no se pueden leer ni tocar desde afuera: todo pasa por la funcion, que controla los datos.
+const AVISOS_URL = `${SUPABASE_URL}/functions/v1/avisos`;
+const VAPID_PUBLICA = "BJ07gW8O0BpfHfF1mApsuiLQRgRQnx1gOEZdXzn2Qs53u03PTDNzle5Fw7Q3y5pZZdeu52DAa_GGNbsO3xmMHKg";
+const TIPOS_AVISO = ["smn", "canal", "niebla", "marea", "tramo", "viento"];
+const AV_DEFECTO = { avisos: Object.fromEntries(TIPOS_AVISO.map((t) => [t, false])), nivelViento: "rojo", silencio: null };
+let avCfg = { ...AV_DEFECTO, ...(leerLocal("avisos_cfg") ?? {}) };
+let avReg = leerLocal("avisos_reg"); // { endpoint, llave } si este celular esta anotado
+const esIOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+const instalada = () => matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+const soportaPush = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+const enCompu = ["127.0.0.1", "localhost"].includes(location.hostname); // probado en la compu = celular de PRUEBA (no recibe avisos reales)
+const avEl = (id) => document.getElementById(id);
+const b64aBytes = (s) => { const t = s.replace(/-/g, "+").replace(/_/g, "/"); return Uint8Array.from(atob(t + "===".slice((t.length + 3) % 4)), (c) => c.charCodeAt(0)); };
+
+function prefsAvisos() {
+  const cal = caladoM(aguaAj);
+  return { avisos: { ...avCfg.avisos }, calado: cal == null ? null : cm(cal), margen: Math.max(MARGEN_MIN, aguaAj.margen ?? MARGEN_MIN), colchon: Math.max(0, aguaAj.colchon ?? 0),
+    rioMin: lim.rioMin, vAmar: lim.vAmar, vNar: lim.vNar, vRojo: lim.vRojo, gAmar: lim.gAmar, gRojo: lim.gRojo, nivelViento: avCfg.nivelViento, silencio: avCfg.silencio };
+}
+async function llamarAvisos(cuerpo) {
+  const r = await fetch(AVISOS_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(cuerpo) });
+  const j = await r.json().catch(() => ({}));
+  return { ok: r.ok, estado: r.status, ...j };
+}
+const avMsj = (txt, mal = false) => { const e = avEl("av-estado"); e.textContent = txt; e.classList.toggle("error-form", mal); };
+
+function pintarAvisos() {
+  const ios = esIOS && !instalada();
+  avEl("av-ios").hidden = !ios;
+  const anotado = !!avReg;
+  avEl("av-activar-caja").hidden = anotado || ios || !soportaPush();
+  avEl("av-opciones").hidden = !anotado;
+  if (!soportaPush() && !ios) avMsj("Este navegador no permite avisos. En Android usá Chrome; en iPhone, Safari con Tu Faro en la pantalla de inicio.");
+  else if (ios && !anotado) avMsj("");
+  else if (anotado && Notification.permission === "denied") avMsj("Los avisos están bloqueados en este celular. Habilitalos en los ajustes del celular (ver \"¿No te llegan?\").", true);
+  else if (anotado) avMsj(`Avisos activados en este celular${enCompu ? " (modo prueba: solo recibe avisos de prueba)" : ""}.`);
+  else if (!avEl("av-estado").classList.contains("error-form")) avMsj("Apagados. Tocá \"Activar avisos\" para elegir cuáles querés.");
+  for (const c of document.querySelectorAll("[data-av]")) c.checked = !!avCfg.avisos[c.dataset.av];
+  const sinMin = lim.rioMin == null, sinCal = aguaAj.calado == null;
+  const cm_ = document.querySelector('[data-av="marea"]'), ct = document.querySelector('[data-av="tramo"]');
+  cm_.disabled = sinMin; ct.disabled = sinCal;
+  avEl("av-marea-nota").textContent = sinMin ? "primero cargá tu mínimo en \"Altura del río\" (arriba)" : `avisa si Norden baja de ${m2(lim.rioMin)} m`;
+  avEl("av-tramo-nota").textContent = sinCal ? "primero cargá el calado en \"Mi buque\" (arriba)" : `con calado ${m2(caladoM(aguaAj))} m y margen ${m2(Math.max(MARGEN_MIN, aguaAj.margen))} m`;
+  avEl("av-nivel").value = avCfg.nivelViento;
+  avEl("av-sil").checked = !!avCfg.silencio; avEl("av-horas").hidden = !avCfg.silencio;
+  if (avCfg.silencio) { avEl("av-desde").value = avCfg.silencio.desde; avEl("av-hasta").value = avCfg.silencio.hasta; }
+}
+
+async function suscripcion() {
+  const reg = await navigator.serviceWorker.ready;
+  return { reg, sub: await reg.pushManager.getSubscription() };
+}
+async function altaAvisos(sub) {
+  const j = sub.toJSON();
+  const r = await llamarAvisos({ accion: "alta", endpoint: j.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth, prefs: prefsAvisos(), ...(enCompu ? { prueba: true } : {}) });
+  if (!r.ok) throw new Error(r.error ?? `error ${r.estado}`);
+  avReg = { endpoint: j.endpoint, llave: r.llave }; guardarLocal("avisos_reg", avReg);
+}
+async function activarAvisos() {
+  const b = avEl("btn-av-activar"); b.disabled = true;
+  try {
+    if (Notification.permission === "denied") throw new Error("Los avisos están bloqueados para Tu Faro. Habilitalos en los ajustes del celular (ver \"¿No te llegan?\") y probá de nuevo.");
+    if (await Notification.requestPermission() !== "granted") throw new Error("No diste permiso para los avisos.");
+    avMsj("Anotando este celular…");
+    let { reg, sub } = await suscripcion();
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64aBytes(VAPID_PUBLICA) });
+    await altaAvisos(sub);
+    avMsj("");
+  } catch (e) { avMsj(e.message ?? "No se pudo activar.", true); }
+  b.disabled = false; pintarAvisos();
+}
+let avTimer = null;
+function sincronizarAvisos() { // al cambiar algo, se actualiza en Supabase (con una pausita para juntar cambios)
+  if (!avReg) return;
+  clearTimeout(avTimer);
+  avTimer = setTimeout(async () => {
+    try {
+      const r = await llamarAvisos({ accion: "actualizar", endpoint: avReg.endpoint, llave: avReg.llave, prefs: prefsAvisos() });
+      if (r.estado === 403) { const { sub } = await suscripcion(); if (sub) await altaAvisos(sub); else { avReg = null; guardarLocal("avisos_reg", null); } }
+      else if (!r.ok) throw new Error(r.error);
+      pintarAvisos();
+    } catch (e) { avMsj(`No se pudo guardar el cambio en el servidor (${e.message ?? "sin conexión"}). Se reintenta al abrir la app.`, true); }
+  }, 600);
+}
+function guardarAvCfg() { guardarLocal("avisos_cfg", avCfg); pintarAvisos(); sincronizarAvisos(); }
+avEl("btn-av-activar").addEventListener("click", activarAvisos);
+for (const c of document.querySelectorAll("[data-av]")) c.addEventListener("change", () => { avCfg = { ...avCfg, avisos: { ...avCfg.avisos, [c.dataset.av]: c.checked } }; guardarAvCfg(); });
+avEl("av-nivel").addEventListener("change", (ev) => { avCfg.nivelViento = ev.target.value === "amarillo" ? "amarillo" : "rojo"; guardarAvCfg(); });
+const leerSilencio = () => avEl("av-sil").checked && avEl("av-desde").value && avEl("av-hasta").value && avEl("av-desde").value !== avEl("av-hasta").value
+  ? { desde: avEl("av-desde").value, hasta: avEl("av-hasta").value } : null;
+avEl("av-sil").addEventListener("change", () => { avEl("av-horas").hidden = !avEl("av-sil").checked; avCfg.silencio = leerSilencio(); guardarAvCfg(); });
+for (const id of ["av-desde", "av-hasta"]) avEl(id).addEventListener("change", () => { avCfg.silencio = leerSilencio(); guardarAvCfg(); });
+avEl("btn-av-probar").addEventListener("click", async (ev) => {
+  ev.target.disabled = true; avMsj("Mandando un aviso de prueba…");
+  try {
+    const r = await llamarAvisos({ accion: "probar", endpoint: avReg.endpoint, llave: avReg.llave });
+    if (r.estado === 410 || r.estado === 403) { avReg = null; guardarLocal("avisos_reg", null); throw new Error(r.error ?? "Este celular ya no está anotado: activá los avisos de nuevo."); }
+    if (!r.ok) throw new Error(r.error);
+    avMsj("Aviso de prueba enviado: debería llegar en unos segundos.");
+  } catch (e) { avMsj(e.message ?? "No se pudo mandar.", true); }
+  ev.target.disabled = false; if (!avReg) pintarAvisos();
+});
+avEl("btn-av-baja").addEventListener("click", async (ev) => {
+  ev.target.disabled = true;
+  try { await llamarAvisos({ accion: "baja", endpoint: avReg.endpoint, llave: avReg.llave }); } catch { /* si no hay conexion, igual se borra solo cuando el robot vea que no existe */ }
+  try { const { sub } = await suscripcion(); await sub?.unsubscribe(); } catch { /* nada */ }
+  avReg = null; guardarLocal("avisos_reg", null); avCfg = { ...AV_DEFECTO }; guardarLocal("avisos_cfg", avCfg);
+  ev.target.disabled = false; avMsj("Avisos desactivados en este celular."); pintarAvisos();
+});
+// Al abrir: si el navegador cambio la suscripcion (o la borro), se vuelve a anotar o se olvida.
+async function revisarSuscripcion() {
+  if (!avReg || !soportaPush()) return;
+  try {
+    const { sub } = await suscripcion();
+    if (!sub || Notification.permission !== "granted") { avReg = null; guardarLocal("avisos_reg", null); }
+    else if (sub.endpoint !== avReg.endpoint) await altaAvisos(sub);
+    else sincronizarAvisos();
+  } catch { /* sin conexion: se reintenta la proxima vez */ }
+  pintarAvisos();
+}
+// Tocar un aviso abre la app en la seccion que corresponde.
+function irDesdeAviso(id) {
+  if (!/^(sec-[a-z-]+|ajustes)$/.test(id)) return;
+  const intentar = (n) => { if (document.getElementById(id) && ultimos) irA(id); else if (n > 0) setTimeout(() => intentar(n - 1), 400); };
+  intentar(25);
+}
+pintarAvisos();
 
 // Color de la barra del celular: negra en modo noche.
 function colorBarraCelular() {
@@ -1008,10 +1139,13 @@ colorBarraCelular();
 if (!window.MODO_PRUEBA) { // la pagina de pruebas (solo en la compu) usa las funciones sin bajar datos
   mostrarAvisoSiHaceFalta();
   if (location.hash === "#mapa") { history.replaceState(null, "", location.pathname + location.search); setTimeout(() => abrirMapa(), 300); }
+  const irHash = () => { const irH = location.hash.match(/^#ir=([a-z-]+)$/); if (irH) { history.replaceState(null, "", location.pathname + location.search); irDesdeAviso(irH[1]); } };
+  irHash(); window.addEventListener("hashchange", irHash);
+  if ("serviceWorker" in navigator) navigator.serviceWorker.addEventListener("message", (ev) => { if (typeof ev.data?.ir === "string") irDesdeAviso(ev.data.ir); });
   const cache = leerLocal("ultimos_datos");
   if (cache) render(cache.d);
   actualizar();
   setInterval(() => { if (document.visibilityState === "visible") actualizar(); }, REFRESCO_MS);
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") actualizar(); });
-  if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").then(() => revisarSuscripcion()).catch(() => {});
 }

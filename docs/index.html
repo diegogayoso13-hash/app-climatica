@@ -58,6 +58,38 @@
         <button type="submit" class="primario">Guardar</button>
       </div>
     </form>
+    <div class="avisos-cel" id="avisos">
+      <h3 class="sub">Avisos al celular</h3>
+      <p class="nota" id="av-estado" aria-live="polite"></p>
+      <div id="av-ios" class="av-pasos" hidden>
+        <p><strong>En iPhone</strong> los avisos solo funcionan con iOS 16.4 o más nuevo y con Tu Faro en la pantalla de inicio:</p>
+        <ol><li>Abrí esta página en <strong>Safari</strong>.</li><li>Tocá el botón <strong>Compartir</strong> (el cuadrado con la flecha).</li><li>Elegí <strong>Agregar a inicio</strong>.</li><li>Abrí Tu Faro desde el ícono nuevo y volvé acá a <strong>Activar avisos</strong>.</li></ol>
+      </div>
+      <div class="botones" id="av-activar-caja"><button type="button" class="primario" id="btn-av-activar">Activar avisos</button></div>
+      <div id="av-opciones" hidden>
+        <p class="nota" style="margin-top:0">Elegí qué avisos querés. Todos empiezan apagados.</p>
+        <label class="av-op"><input type="checkbox" data-av="smn"><span>Alerta nueva del SMN <small>cualquier nivel, para la zona</small></span></label>
+        <label class="av-op"><input type="checkbox" data-av="canal"><span>Novedad nueva del canal <small>radioaviso o baliza, una vez por novedad</small></span></label>
+        <label class="av-op"><input type="checkbox" data-av="niebla"><span>Niebla prevista <small>menos de 1000 m en las próximas 12 h, una vez por episodio</small></span></label>
+        <label class="av-op"><input type="checkbox" data-av="marea"><span>Marea de Norden bajo mi mínimo <small id="av-marea-nota">usa el mínimo de "Altura del río"</small></span></label>
+        <label class="av-op"><input type="checkbox" data-av="tramo"><span>Tramo en rojo con mi calado <small id="av-tramo-nota">usa el calado y el margen de "Mi buque"</small></span></label>
+        <label class="av-op"><input type="checkbox" data-av="viento"><span>Viento o ráfaga en Norden sobre mi límite <small>de "Viento medio" y "Ráfagas"</small></span></label>
+        <label class="av-fila">Límite de viento que avisa <select id="av-nivel"><option value="rojo">rojo</option><option value="amarillo">amarillo</option></select></label>
+        <p class="nota">Marea, tramo y viento: avisan una vez; no repiten hasta que se normaliza y vuelve a pasar, y nunca más de uno por hora del mismo tipo.</p>
+        <label class="av-op"><input type="checkbox" id="av-sil"><span>Horario de silencio <small>al terminar llegan las alertas y novedades que siguen vigentes, y marea, tramo o viento si siguen así</small></span></label>
+        <div class="av-horas" id="av-horas" hidden><label>desde <input type="time" id="av-desde" value="23:00"></label><label>hasta <input type="time" id="av-hasta" value="06:00"></label></div>
+        <div class="botones"><button type="button" id="btn-av-probar">Probar aviso</button><button type="button" id="btn-av-baja">Desactivar avisos</button></div>
+      </div>
+      <p class="nota av-resp"><strong>Los avisos son una ayuda.</strong> Pueden llegar tarde o no llegar (por ejemplo, por el ahorro de batería del celular). No dependas de ellos.</p>
+      <details class="av-ayuda">
+        <summary>¿No te llegan?</summary>
+        <p><strong>Android:</strong></p>
+        <ol><li>Ajustes del celular → <strong>Aplicaciones</strong> → <strong>Chrome</strong> (o Tu Faro, si la instalaste) → <strong>Notificaciones</strong>: activadas.</li><li>En la misma pantalla → <strong>Batería</strong> → <strong>Sin restricciones</strong> (o "No optimizar").</li><li>Samsung: Ajustes → Mantenimiento del dispositivo → Batería → <strong>Límites de uso en segundo plano</strong>: sacá Chrome de "Aplicaciones en suspensión".</li><li>Revisá que no esté en <strong>No molestar</strong>.</li></ol>
+        <p><strong>iPhone:</strong></p>
+        <ol><li>Tiene que estar en la pantalla de inicio (ver arriba) y abrirse desde ese ícono.</li><li>Ajustes → <strong>Notificaciones</strong> → Tu Faro: <strong>Permitir notificaciones</strong>.</li><li>Revisá los <strong>Modos de concentración</strong> (No molestar, Dormir).</li></ol>
+        <p>Después tocá <strong>Probar aviso</strong>. Si igual no llega, tocá Desactivar y Activar de nuevo.</p>
+      </details>
+    </div>
   </section>
 
   <dialog id="aviso-inicial" aria-labelledby="aviso-titulo">
