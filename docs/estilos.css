@@ -455,3 +455,12 @@ html.con-mapa body { overflow: hidden; }
 .app .mapa-pos .mp-i { width: 28px; height: 28px; min-height: 28px; padding: 0; border-radius: 50%; border: 1px solid var(--borde); background: none; color: var(--acento); font: italic 700 .85rem Georgia, serif; }
 .app .mapa-pos .mp-info { font-size: .8rem; font-weight: 400; color: var(--suave); }
 .app .ley-punteada { display: inline-block; width: 22px; height: 0; border-top: 3px dashed var(--acento); vertical-align: middle; margin: 0 4px; }
+/* Cartel de posicion v22: dos lineas grandes; tocar abre el detalle */
+.app .mapa-pos { cursor: pointer; padding: 8px 30px 8px 12px; gap: 0; -webkit-tap-highlight-color: transparent; }
+.app .mapa-pos:focus-visible { outline: 3px solid var(--acento); outline-offset: 2px; }
+.app .mapa-pos .mp-l1 { font-size: 1.45rem; font-weight: 700; line-height: 1.25; letter-spacing: -.01em; }
+.app .mapa-pos .mp-l2 { font-size: 1.25rem; font-weight: 700; line-height: 1.3; color: var(--num, var(--texto)); }
+.app .mapa-pos .mp-l2.mp-gris { color: var(--suave); }
+.app .mapa-pos .mp-mas { position: absolute; right: 10px; top: 10px; font-size: .9rem; color: var(--suave); }
+.app .mapa-pos .mp-det { display: flex; flex-direction: column; gap: 3px; margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--borde); font-size: .95rem; font-weight: 500; }
+.app .mapa-pos .mp-det .mp-aclara { display: block; font-size: .78rem; font-weight: 400; color: var(--suave); }

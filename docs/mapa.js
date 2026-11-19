@@ -134,43 +134,59 @@ const kmDist = (x) => x.toLocaleString("es-UY", { minimumFractionDigits: 1, maxi
 const LEJOS_DEL_EJE_M = 1500; // mas lejos que esto del eje: "fuera del canal"
 const tramoDeKm = (tramos, km) => (tramos ?? []).find((t) => km >= Number(t.km_desde) && km < Number(t.km_hasta)) ?? (tramos ?? []).find((t) => km >= Number(t.km_desde) && km <= Number(t.km_hasta)) ?? null;
 let GPS = { watch: null, marca: null, circulo: null, centrado: false, ultima: null, hist: [], sentido: 0, info: false, reloj: null };
-const INFO_VEL = "Velocidad sobre el fondo, del GPS del celular, promediada 10 segundos (si el celular no la da, se calcula con las últimas posiciones). Detenido: menos de 0,5 kn. Aguas arriba = km creciente (REMAGA 2019). La hora de paso por el próximo punto de información (REMAGA 2019, canal 81) se estima con la velocidad de este momento: no tiene en cuenta si vas a frenar ni los cambios de corriente. Todo se calcula en el celular, sin internet.";
+const ACLARA_VEL = "Velocidad sobre el fondo (GPS), promediada 10 s. La hora de paso se estima con la velocidad actual: no tiene en cuenta si vas a frenar ni la corriente.";
+// Agua del tramo donde estoy: MISMO calculo y color que "Agua por tramo" (calcularAgua de app.js)
+function aguaAca(km) {
+  const tramos = ultimos?.tramos;
+  if (!tramos?.length) return null;
+  const t = tramoDeKm(tramos, km); if (!t) return null;
+  const f = calcularAgua(tramos, indexar(ultimos.ultimas ?? []), aguaAj).filas.find((x) => x.t === t);
+  if (!f) return null;
+  if (f.estado === "gris") return { t, html: "sin marea reciente", clase: "mp-gris" };
+  if (f.estado === "sin-calado") return { t, html: `${m2(f.agua)} m de agua`, clase: "" };
+  return { t, html: f.quilla < 0 ? `el calado supera el agua por ${m2(-f.quilla)} m` : `${m2(f.quilla)} m bajo la quilla`, clase: CLASE[f.estado] ?? "" };
+}
+// Cartel de posicion: 2 lineas grandes (se leen de un vistazo) y, al tocarlo, el detalle.
 function textoPosicion(pos, ahora = Date.now()) {
   if (!MAPA) return "";
   const { latitude: lat, longitude: lon, accuracy } = pos.coords;
   const r = kmDePosicion(MAPA.eje, lat, lon);
   const enCanal = r.dist <= LEJOS_DEL_EJE_M;
-  const lineas = [];
-  if (!enCanal) lineas.push(`Fuera del canal (a ${(r.dist / 1000).toLocaleString("es-UY", { maximumFractionDigits: 1 })} km del eje) · ±${Math.round(accuracy)} m`);
-  else { const t = tramoDeKm(ultimos?.tramos, r.km); lineas.push(`km ${kmTxt(r.km)}${t ? ` · ${esc(t.nombre)}` : ""} · ±${Math.round(accuracy)} m`); }
   const m = movimiento(GPS.hist, ahora);
   if (!enCanal) GPS.sentido = 0;
   else if (m && !m.detenido && m.rumbo != null) { const s = sentidoDe(m.rumbo, r.rumboEje); if (s) GPS.sentido = s; } // de traves: queda el ultimo
-  const lado = GPS.sentido > 0 ? "aguas arriba" : "aguas abajo";
-  if (!m || m.kn == null) lineas.push("Velocidad: sin dato del GPS");
-  else if (m.detenido) lineas.push(`detenido${enCanal && GPS.sentido ? ` · venías ${lado}` : ""}`);
-  else lineas.push(`${kmDist(m.kn)} kn${m.rumbo != null ? ` · rumbo ${Math.round(m.rumbo) % 360}° · ${rumbo8(m.rumbo)}` : ""}${enCanal && GPS.sentido ? ` · ${lado}` : ""}`);
+  // Linea 1: km · velocidad · rumbo
+  const vel = !m || m.kn == null ? "sin dato de velocidad" : m.detenido ? "detenido" : `${kmDist(m.kn)} kn${m.rumbo != null ? ` · ${Math.round(m.rumbo) % 360}°` : ""}`;
+  const l1 = `${enCanal ? `km ${kmTxt(r.km)}` : "fuera del canal"} · ${vel}`;
+  // Linea 2: agua bajo la quilla en el tramo (solo dentro del canal)
+  const ag = enCanal ? aguaAca(r.km) : null;
+  // Detalle
+  const det = [];
   if (enCanal) {
+    const lado = GPS.sentido > 0 ? "aguas arriba" : "aguas abajo";
+    const t = ag?.t ?? tramoDeKm(ultimos?.tramos, r.km);
+    const sent = GPS.sentido ? (m?.detenido ? `venías ${lado}` : lado) : "";
+    det.push([t ? esc(t.nombre) : "", sent].filter(Boolean).join(" · "));
     if (GPS.sentido) {
       const p = proximoPunto(r.km, GPS.sentido);
-      if (p == null) lineas.push(`Ya pasaste el último punto de información (km ${kmTxt(GPS.sentido > 0 ? PUNTOS_INFO.at(-1) : PUNTOS_INFO[0])})`);
+      if (p == null) det.push(`Ya pasaste el último punto de información (km ${kmTxt(GPS.sentido > 0 ? PUNTOS_INFO.at(-1) : PUNTOS_INFO[0])})`);
       else {
         const d = Math.abs(p - r.km), andando = m && m.kn != null && !m.detenido;
-        lineas.push(`Próximo punto: km ${kmTxt(p)} · a ${kmDist(d)} km · ${andando ? `paso ≈ ${horaHM(ahora + d * 1000 / (m.kn * KN_MS) * 1000)}` : `sin hora${m?.detenido ? " (detenido)" : ""}`}`);
+        det.push(`Próximo punto: km ${kmTxt(p)} · a ${kmDist(d)} km · ${andando ? `paso ≈ ${horaHM(ahora + d * 1000 / (m.kn * KN_MS) * 1000)}` : `sin hora${m?.detenido ? " (detenido)" : ""}`}`);
       }
     } else { // todavia no se sabe para que lado: los dos vecinos, sin hora
       const ab = proximoPunto(r.km, -1), ar = proximoPunto(r.km, 1);
-      lineas.push(`Puntos de información: ${[ab != null && `km ${kmTxt(ab)} (abajo) a ${kmDist(r.km - ab)} km`, ar != null && `km ${kmTxt(ar)} (arriba) a ${kmDist(ar - r.km)} km`].filter(Boolean).join(" · ")}`);
+      det.push(`Puntos de información: ${[ab != null && `km ${kmTxt(ab)} (abajo) a ${kmDist(r.km - ab)} km`, ar != null && `km ${kmTxt(ar)} (arriba) a ${kmDist(ar - r.km)} km`].filter(Boolean).join(" · ")}`);
     }
-  }
-  return lineas.map((l, i) => `<span class="mp-l${i ? "" : " mp-km"}">${l}</span>`).join("")
-    + `<span class="mp-aclara">Velocidad sobre el fondo (GPS) <button type="button" class="mp-i" aria-expanded="${GPS.info}" aria-label="Más información">i</button></span>`
-    + (GPS.info ? `<span class="mp-info">${INFO_VEL}</span>` : "");
+  } else det.push(`a ${(r.dist / 1000).toLocaleString("es-UY", { maximumFractionDigits: 1 })} km del eje del canal`);
+  det.push(`Precisión del GPS ±${Math.round(accuracy)} m`);
+  return `<span class="mp-l1">${l1}</span>${ag ? `<span class="mp-l2 ${ag.clase}">${ag.html}</span>` : ""}`
+    + (GPS.info ? `<span class="mp-det">${det.filter(Boolean).map((x) => `<span class="mp-d">${x}</span>`).join("")}<span class="mp-aclara">${ACLARA_VEL}</span></span>` : `<span class="mp-mas" aria-hidden="true">▾</span>`);
 }
 function pintarPosicion() {
   if (!GPS.ultima) return;
   const el = document.getElementById("mapa-pos"); if (!el) return;
-  el.hidden = false; el.innerHTML = textoPosicion(GPS.ultima);
+  el.hidden = false; el.innerHTML = textoPosicion(GPS.ultima); el.setAttribute("aria-expanded", String(GPS.info));
 }
 function mostrarPosicion(pos) {
   if (!MAPA) return;
@@ -243,12 +259,15 @@ function panelMapa() {
   p.innerHTML = `<header class="mapa-barra"><button type="button" class="btn-icono" id="btn-cerrar-mapa" aria-label="Volver">←</button><strong>Mapa del canal</strong><span class="mapa-act" id="mapa-act"></span></header>
     <div class="mapa-cont"><div id="mapa" class="mapa"></div>
       <button type="button" class="btn-gps" id="btn-gps" aria-label="Mi posición" title="Mi posición (GPS)">📍</button>
-      <div class="mapa-pos" id="mapa-pos" hidden></div></div>
+      <div class="mapa-pos" id="mapa-pos" role="button" tabindex="0" aria-expanded="false" aria-label="Posición: tocá para ver el detalle" hidden></div></div>
     <details class="mapa-pie" id="mapa-pie"><summary><span>Posiciones de referencia; pueden no reflejar cambios recientes.</span><span class="chev-m">Leyenda ▾</span></summary><div id="mapa-leyenda"></div></details>`;
   document.body.appendChild(p);
   p.querySelector("#btn-cerrar-mapa").addEventListener("click", () => history.state?.mapa ? history.back() : cerrarMapa());
   p.querySelector("#btn-gps").addEventListener("click", () => iniciarGps());
-  p.querySelector("#mapa-pos").addEventListener("click", (ev) => { if (ev.target.closest(".mp-i")) { GPS.info = !GPS.info; pintarPosicion(); } });
+  const cartel = p.querySelector("#mapa-pos");
+  const alternar = () => { if (!GPS.ultima) return; GPS.info = !GPS.info; pintarPosicion(); };
+  cartel.addEventListener("click", alternar);
+  cartel.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); alternar(); } });
   return p;
 }
 async function abrirMapa() {
