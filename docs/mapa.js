@@ -19,18 +19,32 @@ function cargarLeaflet() {
 }
 
 // Eje del canal: punto medio de cada par roja/verde del mismo km; donde hay una sola lateral, esa.
-function ejeCanal(ss) {
+// Eje (medio) del canal. Con par de boyas: el punto medio. Con boya de un solo lado: medio ancho del tramo
+// (tabla de anchos de la CARP) hacia adentro del canal: desde una roja hacia babor subiendo, desde una verde hacia
+// estribor (sistema B: subiendo, rojas a estribor). Sin la tabla de anchos queda sobre la boya (como antes).
+function ejeCanal(ss, tramos = null) {
   const porKm = new Map();
   for (const s of ss) (porKm.get(s.km) ?? porKm.set(s.km, []).get(s.km)).push(s);
   const kms = [...porKm.keys()].sort((a, b) => a - b), eje = [];
+  const lat_ = (c) => { const vistos = new Set(); return ss.filter((s) => s.tipo === "Lateral" && (c === "roja" ? s.color.startsWith("roja") : s.color === "verde")).sort((a, b) => a.km - b.km).filter((s) => !vistos.has(s.km) && vistos.add(s.km)); };
+  const cadena = { roja: lat_("roja"), verde: lat_("verde") };
   for (const km of kms) {
     const g = porKm.get(km), r = g.find((s) => s.tipo === "Lateral" && s.color.startsWith("roja")), v = g.find((s) => s.tipo === "Lateral" && s.color === "verde");
     if (r && v) eje.push({ km, lat: (r.lat + v.lat) / 2, lon: (r.lon + v.lon) / 2 });
-    else if (r || v) eje.push({ km, lat: (r || v).lat, lon: (r || v).lon });
+    else if (r || v) {
+      const b = r || v, t = tramoDeKm(tramos, km), medio = t && Number(t.ancho_m) > 0 ? Number(t.ancho_m) / 2 : 0;
+      if (!medio) { eje.push({ km, lat: b.lat, lon: b.lon }); continue; }
+      // direccion de "km creciente" en ese lugar, siguiendo las boyas del mismo color
+      const c = cadena[r ? "roja" : "verde"], [la1, lo1] = enKm(c, km - 0.3), [la2, lo2] = enKm(c, km + 0.3);
+      const d = planoM({ lat: la1, lon: lo1 }, { lat: la2, lon: lo2 }), l = Math.hypot(d.x, d.y) || 1;
+      const sx = (r ? -1 : 1) * d.y / l, sy = (r ? -1 : 1) * -d.x / l; // roja: a babor (izquierda) · verde: a estribor (derecha)
+      eje.push({ km, lat: b.lat + sy * medio / 110540, lon: b.lon + sx * medio / (111320 * Math.cos(b.lat * Math.PI / 180)), unLado: r ? "roja" : "verde", medio });
+    }
     else if (km === kms[0] || km === kms[kms.length - 1]) eje.push({ km, lat: g[0].lat, lon: g[0].lon }); // los extremos (km 39, 145,5)
   }
   return eje;
 }
+const anchosClave = (tramos) => (tramos ?? []).map((t) => `${t.km_desde}-${t.km_hasta}:${t.ancho_m}`).join("|");
 // Posicion aproximada de un km sobre el eje (interpolando entre los puntos del eje).
 function enKm(eje, km) {
   if (km <= eje[0].km) return [eje[0].lat, eje[0].lon];
@@ -194,6 +208,29 @@ function detenerGps() {
   document.getElementById("btn-gps")?.classList.remove("activo");
 }
 
+// ----- fondeaderos (REMAGA 2019, art. 2.13) -----
+// Todos del lado de las boyas rojas: los de emergencia "veril rojo"; los de uso normal, lado uruguayo
+// (comprobado con las coordenadas: en esos tramos las rojas quedan del lado de la costa uruguaya).
+const FONDEOS = [
+  { km: [124.5, 130.2], nombre: "Fondeadero (uso normal)", donde: "fuera del canal, lado uruguayo; la posición exacta la indica la Autoridad Marítima", art: "2.13.1" },
+  { km: [137.3, 141.4], nombre: "Fondeadero (uso normal)", donde: "fuera del canal, lado uruguayo; la posición exacta la indica la Autoridad Marítima", art: "2.13.1" },
+  { km: [108.3, 109.2], nombre: "Fondeadero de emergencia · Canal del Infierno", emergencia: true, donde: "fuera del canal, veril rojo (lado de las boyas rojas)", art: "2.13.2" },
+  { km: [84.7, 85.7], nombre: "Fondeadero de emergencia · Pozos de San Juan", emergencia: true, donde: "fuera del canal, veril rojo (lado de las boyas rojas), área demarcada con señales especiales amarillas · 7,15 m", art: "2.13.2" },
+];
+const FONDEO_AFUERA_M = 200; // la linea punteada va 200 m por afuera de la linea de boyas rojas
+const boyasRojas = (ss) => { const vistos = new Set(); return ss.filter((s) => s.tipo === "Lateral" && s.color.startsWith("roja")).sort((a, b) => a.km - b.km).filter((s) => !vistos.has(s.km) && vistos.add(s.km)); };
+// Linea de las boyas rojas entre dos km, corrida "m" metros hacia afuera (a estribor subiendo = lado de las rojas, sistema B).
+// Cada punto trae nx, ny: la direccion "hacia afuera" (este, norte).
+function bordeRojo(rojas, a, b, m) {
+  const kms = [a, ...rojas.filter((r) => r.km > a && r.km < b).map((r) => r.km), ...(b > a ? [b] : [])];
+  return kms.map((km) => {
+    const [la, lo] = enKm(rojas, km), [la1, lo1] = enKm(rojas, km - 0.2), [la2, lo2] = enKm(rojas, km + 0.2);
+    const t = planoM({ lat: la1, lon: lo1 }, { lat: la2, lon: lo2 }), l = Math.hypot(t.x, t.y) || 1;
+    const nx = t.y / l, ny = -t.x / l; // a la derecha de "km creciente"
+    return { km, lat: la + ny * m / 110540, lon: lo + nx * m / (111320 * Math.cos(la * Math.PI / 180)), nx, ny };
+  });
+}
+
 // ----- dibujo -----
 const varCss = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const FORMA = (s) => s.tipo === "Lateral" ? (s.color === "verde" ? "verde" : s.color.includes("CPB") ? "cpb" : "roja")
@@ -226,7 +263,7 @@ async function abrirMapa() {
       L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 18, attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' }).addTo(map);
       map.attributionControl.setPrefix('<a href="https://leafletjs.com">Leaflet</a>');
       map.fitBounds(L.latLngBounds(ss.map((s) => [s.lat, s.lon])), { padding: [16, 16] });
-      MAPA = { map, capa: L.layerGroup().addTo(map), eje: ejeCanal(ss) };
+      MAPA = { map, capa: L.layerGroup().addTo(map), eje: ejeCanal(ss, ultimos?.tramos), anchos: anchosClave(ultimos?.tramos) };
     }
     setTimeout(() => MAPA.map.invalidateSize(), 50);
     dibujarMapa(ultimos);
@@ -244,6 +281,7 @@ window.addEventListener("popstate", () => { if (!history.state?.mapa) cerrarMapa
 
 function dibujarMapa(d) {
   if (!MAPA || !d || !SENALES) return;
+  if (anchosClave(d.tramos) !== MAPA.anchos) { MAPA.eje = ejeCanal(SENALES, d.tramos); MAPA.anchos = anchosClave(d.tramos); } // cambio la tabla de anchos de la CARP
   const { map, capa, eje } = MAPA, ss = SENALES;
   capa.clearLayers();
   const ix = indexar(d.ultimas ?? []), aj = aguaAj;
@@ -260,10 +298,19 @@ function dibujarMapa(d) {
   }
   // Km cada 5
   for (let km = 40; km <= 145; km += 5) L.marker(enKm(eje, km), { icon: L.divIcon({ className: "km-et", html: `km ${km}`, iconSize: null }), interactive: false, keyboard: false }).addTo(capa);
-  // Fondeaderos (marcados por km: estan fuera del canal)
-  const FONDEOS = [[124.5, 130.2, "Fondeadero (uso normal)"], [137.3, 141.4, "Fondeadero (uso normal)"], [108.3, 109.2, "Fondeadero de emergencia · Canal del Infierno, veril rojo"], [84.7, 85.7, "Fondeadero de emergencia · Pozos de San Juan, veril rojo (7,15 m)"]];
-  for (const [a, b, txt] of FONDEOS) L.marker(enKm(eje, (a + b) / 2), { icon: L.divIcon({ className: `fondeo-et ${/emergencia/.test(txt) ? "emerg" : ""}`, html: "⚓", iconSize: [26, 26] }) })
-    .bindPopup(`<strong>${esc(txt)}</strong><br>km ${kmTxt(a)}–${kmTxt(b)} · fuera del canal (marcado por km)<br><small>REMAGA 2019, art. 2.13</small>`).addTo(capa);
+  // Fondeaderos (REMAGA art. 2.13): FUERA del canal, del lado de las boyas rojas (nunca un ancla sobre el canal).
+  // El REMAGA los da por km: se marca el tramo con una linea punteada por afuera de las rojas y el ancla al costado.
+  const rojas = boyasRojas(ss);
+  for (const f of FONDEOS) {
+    const linea = bordeRojo(rojas, f.km[0], f.km[1], FONDEO_AFUERA_M);
+    const color = f.emergencia ? varCss("--l-naranja") : varCss("--acento");
+    const pop = `<strong>${esc(f.nombre)}</strong><br>km ${kmTxt(f.km[0])}–${kmTxt(f.km[1])} · ${esc(f.donde)}<br><small>REMAGA 2019, art. ${f.art}</small>`;
+    L.polyline(linea.map((x) => [x.lat, x.lon]), { color, weight: 3, dashArray: "6 6", opacity: 0.95 }).bindPopup(pop).addTo(capa);
+    const medio = bordeRojo(rojas, (f.km[0] + f.km[1]) / 2, (f.km[0] + f.km[1]) / 2, FONDEO_AFUERA_M)[0];
+    // el ancla se corre 24 px mas hacia afuera (distancia fija en pantalla: no marca un lugar exacto)
+    L.marker([medio.lat, medio.lon], { icon: L.divIcon({ className: `fondeo-et ${f.emergencia ? "emerg" : ""}`, html: "⚓", iconSize: [26, 26], iconAnchor: [13 - medio.nx * 24, 13 + medio.ny * 24] }) })
+      .bindPopup(pop).addTo(capa);
+  }
   // Señales, con las novedades del SOHMA
   const cd = canalDatos(d), u = unirSohma(ss, [...cd.balizas, ...cd.normalizadas.filter((n) => n.tipo === "baliza")]);
   const nov = new Map(u.unidas.map((x) => [x.s, x.n])), misNotas = notas();
@@ -278,7 +325,7 @@ function dibujarMapa(d) {
   document.getElementById("mapa-act").textContent = sinSenal ? "sin señal" : `act. ${hora(Date.now())}`;
   document.getElementById("mapa-leyenda").innerHTML = `
     <div class="ley-fila"><span><i class="sm sm-roja"></i>lateral roja (estribor)</span><span><i class="sm sm-verde"></i>lateral verde (babor)</span><span><i class="sm sm-cardinal"></i>cardinal</span><span><i class="sm sm-peligro"></i>peligro aislado</span><span><i class="sm sm-baliza"></i>baliza</span></div>
-    <div class="ley-fila"><span><i class="ley-linea" style="background:${COLOR.verde}"></i>agua: verde / amarillo / rojo según tu calado</span><span>${gc ? `<i class="ley-linea ancha"></i>zonas de cruce de tu eslora (${n0(aj.eslora ?? 0)} m)` : "Cargá la eslora para ver tus zonas de cruce"}</span><span>⚓ fondeaderos (por km)</span></div>
+    <div class="ley-fila"><span><i class="ley-linea" style="background:${COLOR.verde}"></i>agua: verde / amarillo / rojo según tu calado</span><span>${gc ? `<i class="ley-linea ancha"></i>zonas de cruce de tu eslora (${n0(aj.eslora ?? 0)} m)` : "Cargá la eslora para ver tus zonas de cruce"}</span><span>⚓ <i class="ley-punteada"></i> fondeaderos, fuera del canal del lado de las boyas rojas</span></div>
     ${u.revisar.length ? `<h3 class="sub">Novedades para revisar (no se unieron solas)</h3><ul class="reglas">${u.revisar.map((x) => `<li>Nº ${esc(x.n.clave)} · ${esc(x.n.estado ?? "")} — ${esc(x.motivo)}</li>`).join("")}</ul>` : ""}
     ${u.sinPosicion.length ? `<h3 class="sub">Novedades sin posición en el mapa</h3><ul class="reglas">${u.sinPosicion.map((x) => `<li>Nº ${esc(x.n.clave)} · km ${kmTxt(x.n.km)} · ${esc((x.n.descripcion ?? "").replace(/\s*KM\s*[\d.,]+/i, "").toLowerCase())} · <strong>${esc(x.n.estado ?? "")}</strong> — ${esc(x.motivo)}</li>`).join("")}</ul>` : ""}
     <p class="nota">Señales: planilla de la CARP (km, tipo, color, posición y destello). Fondo: © OpenStreetMap. Referencia, no oficial.</p>`;

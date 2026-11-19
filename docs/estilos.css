@@ -454,3 +454,4 @@ html.con-mapa body { overflow: hidden; }
 .app .mapa-pos .mp-aclara { display: flex; align-items: center; gap: 6px; font-size: .75rem; font-weight: 400; color: var(--suave); }
 .app .mapa-pos .mp-i { width: 28px; height: 28px; min-height: 28px; padding: 0; border-radius: 50%; border: 1px solid var(--borde); background: none; color: var(--acento); font: italic 700 .85rem Georgia, serif; }
 .app .mapa-pos .mp-info { font-size: .8rem; font-weight: 400; color: var(--suave); }
+.app .ley-punteada { display: inline-block; width: 22px; height: 0; border-top: 3px dashed var(--acento); vertical-align: middle; margin: 0 4px; }
