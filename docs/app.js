@@ -320,7 +320,7 @@ const INFO = {
   tendencia: ["Tendencia próximas 3 h", () => `Predicción propia, no oficial: marea astronómica de cada estación (componentes calculadas con el historial de la CARP) corregida con la diferencia de ahora entre lo real y lo astronómico (el efecto del viento). Del lado seguro: predicción menos el error medido (${ERROR_TENDENCIA.map((e) => m2(e)).join(" / ")} m) a 1, 2 y 3 h. "Sube / baja / se mantiene" sale de la predicción sin restar (se mantiene si cambia menos de 5 cm). El mínimo esperado mira todos los tramos. Nada más allá de 3 h.`],
   limb: ["Cero LIMB y horas", () => "Las alturas de marea están en metros sobre el LIMB (Límite Inferior de la Media de todas las Bajamares), el cero que usa la CARP. Hora de Uruguay (UTC-3). Viento en nudos."],
   vis: ["Visibilidad", (corridas = "") => `Visibilidad pronosticada por Open-Meteo (ECMWF 9 km y GFS; por hora se usa el valor más bajo). No hay medición real en el canal. En km; de 10 km para arriba dice "+10"; en cada día, la mínima del día. Rojo: menos de 1 km (REMAGA 2019, art. 2.7.3: mínimo para navegar). Amarillo: de 1 a menos de 3 km (corte elegido por Diego), o de 1 a menos de 8 km si en "Mi buque" hay un buque grande (REMAGA, Tabla II). ${esGrande(aguaAj.eslora ?? null, aguaAj.manga ?? null) ? "Ahora se usa 8 km (tu buque es grande)." : "Ahora se usa 3 km."}${corridas ? ` Corridas: ${corridas}.` : ""} Hay corrida nueva cada 6 h y llega unas 7 h después, así que es normal que tenga entre 7 y 14 h; si tiene más de ${VIS_CORRIDA_ATRASADA_H} h se avisa "atrasada" (se perdió al menos una corrida).`],
-  pronostico: ["Pronóstico", () => "Promedio de los modelos ECMWF, GFS e ICON en el Pilote Norden. En cada día: viento y ráfaga máximos en nudos, dirección predominante y visibilidad mínima. Tocá un día para verlo hora por hora."],
+  pronostico: ["Pronóstico", () => `Promedio de los modelos ECMWF, GFS e ICON en el Pilote Norden. En cada día: viento y ráfaga máximos en nudos, dirección predominante y visibilidad mínima. Tocá un día para verlo hora por hora. Ícono de tormenta: tormenta pronosticada por al menos ${TORMENTA_MIN_MODELOS} de 3 modelos (ECMWF, GFS, ICON) en esa hora, o en alguna hora de ese día (dato de Open-Meteo, "código de tiempo" 95, 96 o 99: tormenta eléctrica, con o sin granizo). No es alerta oficial; las alertas oficiales son las del SMN. Gota: lluvia de 0,5 mm o más en esa hora (promedio de los modelos).`],
   sohma: ["Novedades del canal", () => `Balizamiento y radioavisos del aviso diario del SOHMA (Armada), solo del Canal Martín García (km 39 a 145,5). "Visto desde": primer día que el robot lo vio en los avisos del SOHMA (el SOHMA no informa desde cuándo está cada novedad). Las notas son tuyas, no oficiales, y quedan solo en este celular.`],
   remaga: ["REMAGA 2019", () => "Reglamento de Uso y Navegación del Canal Martín García, versión 2019 (CARP), publicado en el Boletín Oficial argentino el 22/03/2019. Es información fija copiada del reglamento: ante cualquier duda vale el texto oficial y lo que disponga la Autoridad Marítima. La dirección del viento de la Tabla II no se evalúa porque el texto no aclara cómo se aplica."],
   fuentes: ["Fuentes", () => "CARP (Norden, Colonia, Conchillas, Carmelo y tabla de tramos), Armada Nacional (SOHMA y estación Colonia), Open-Meteo (ECMWF, GFS, ICON), SMN (alertas). Esta app es una ayuda: no reemplaza la consulta de las fuentes oficiales para tomar decisiones de seguridad."],
@@ -589,7 +589,7 @@ const VIS_AMARILLO = 3000; // elegido por Diego (buque comun o sin buque cargado
 // Buque grande (Tabla II): amarillo hasta VIS_MIN_GRANDE (8 km).
 const visAmarillo = () => esGrande(aguaAj.eslora ?? null, aguaAj.manga ?? null) ? VIS_MIN_GRANDE : VIS_AMARILLO;
 const VIS_CORRIDA_ATRASADA_H = 18; // normal: 7 a 14 h (corrida cada 6 h, llega ~7 h despues)
-const claseVis = (m) => m == null ? "" : m < VIS_ROJO ? "vis-rojo" : m < visAmarillo() ? "vis-amarillo" : "";
+const claseVis = (m) => m == null ? "vis-sd" : m < VIS_ROJO ? "vis-rojo" : m < visAmarillo() ? "vis-amarillo" : "vis-ok";
 // En km, una decimal redondeada para abajo (del lado seguro); de 10 km para arriba "+10".
 const fmtVis = (m) => m == null ? "s/d" : m >= 10000 ? "+10" : (Math.floor(m / 100) / 10).toLocaleString("es-UY");
 const chipVis = (m, km = "") => `<span class="vis ${claseVis(m)}">${fmtVis(m)}${m == null ? "" : km}</span>`;
@@ -611,17 +611,20 @@ function nieblaProxima(filas) {
 }
 
 // ---------- pronostico ----------
-// El renglon de tormenta/lluvia va al final y solo si alguna hora de esa tira lo usa (asi no queda un hueco en el medio).
-const conIcono = (p) => p.tormenta || p.lluvia >= 0.5;
-const columna = (p, nuevoDia, tor) => `<div class="col ${nuevoDia ? "nuevo-dia" : ""}">
-    <div class="h">${hora(p.t).slice(0, 2)}h</div>${bf(p.v)}<div class="g">${n0(p.g)}</div>
+// Tormenta: solo si al menos 2 de los 3 modelos la dan (con uno solo saldria casi todos los dias).
+const TORMENTA_MIN_MODELOS = 2;
+const hayTormenta = (p) => p.tormenta >= TORMENTA_MIN_MODELOS;
+// El icono de tormenta/lluvia va chiquito al lado de la hora (sin renglon aparte, asi no queda hueco).
+const iconoHora = (p) => hayTormenta(p) ? `<span class="ic-h" title="${p.tormenta} de ${p.n} modelos dan tormenta">${ic("tormenta")}</span>`
+  : p.lluvia >= 0.5 ? `<span class="ic-h lluvia" title="lluvia">${ic("lluvia")}</span>` : "";
+const columna = (p, nuevoDia) => `<div class="col ${nuevoDia ? "nuevo-dia" : ""}">
+    <div class="h">${hora(p.t).slice(0, 2)}h${iconoHora(p)}</div>${bf(p.v)}<div class="g">${n0(p.g)}</div>
     <div class="dir">${flecha(p.dir)}${p.dir == null ? "" : cardinal(p.dir)}</div>
-    ${chipVis(p.vis)}
-    ${tor ? `<div class="tor" title="${p.tormenta ? `${p.tormenta} de ${p.n} modelos dan tormenta` : ""}">${p.tormenta ? ic("tormenta") : p.lluvia >= 0.5 ? ic("lluvia") : ""}</div>` : ""}</div>`;
-const cabecera = (tor) => `<div class="col cab"><div class="h">hora</div><div style="min-height:27px;display:grid;align-items:center">viento</div><div class="g">ráfaga</div><div class="dir" style="min-height:34px;align-content:center">de</div><div class="vis-cab">vis. km</div>${tor ? '<div class="tor"></div>' : ""}</div>`;
+    ${chipVis(p.vis)}</div>`;
+const cabecera = `<div class="col cab"><div class="h">hora</div><div style="min-height:27px;display:grid;align-items:center">viento</div><div class="g">ráfaga</div><div class="dir" style="min-height:34px;align-content:center">de</div><div class="vis-cab">vis. km</div></div>`;
 const tiraHoras = (hs, marcarDia) => {
-  const tor = hs.some(conIcono); let ant = fDiaClave.format(new Date(hs[0].t));
-  return `<div class="tira">${cabecera(tor)}${hs.map((p) => { const k = fDiaClave.format(new Date(p.t)), n = marcarDia && k !== ant; ant = k; return columna(p, n, tor); }).join("")}</div>`;
+  let ant = fDiaClave.format(new Date(hs[0].t));
+  return `<div class="tira">${cabecera}${hs.map((p) => { const k = fDiaClave.format(new Date(p.t)), n = marcarDia && k !== ant; ant = k; return columna(p, n); }).join("")}</div>`;
 };
 function pronostico(filas, config, vis) {
   const punto = config?.find((c) => c.clave === "punto_pronostico")?.valor;
@@ -637,14 +640,13 @@ function pronostico(filas, config, vis) {
     const vMax = Math.max(...hs.map((p) => p.v ?? 0)), gMax = Math.max(...hs.map((p) => p.g ?? 0));
     const conDir = hs.filter((p) => p.dir != null);
     const dir = dirMedia(conDir.map((p) => p.dir), conDir.map((p) => p.v ?? 1)); // predominante, pesada por el viento
-    const tor = hs.some((p) => p.tormenta);
+    const tor = hs.some(hayTormenta);
     const vs = hs.map((p) => p.vis).filter((x) => x != null), vMin = vs.length ? Math.min(...vs) : null;
     return `<details class="dia" data-clave="dia-${k}"><summary>
-      <span class="nom">${i === 0 ? "Mañana" : esc(fD.format(new Date(hs[0].t)))}${hs.length < 20 ? `<small>hasta ${hora(hs.at(-1).t).slice(0, 2)} h</small>` : ""}</span>
+      <span class="nom">${i === 0 ? "Mañana" : esc(fD.format(new Date(hs[0].t)))}${hs.length < 20 ? `<small>hasta ${hora(hs.at(-1).t).slice(0, 2)} h</small>` : ""}${tor ? `<small class="tor-dia">${ic("tormenta")}tormenta</small>` : ""}</span>
       ${bf(vMax)}<span class="raf">r ${n0(gMax)}</span>
       <span class="dd">${flecha(dir)}${dir == null ? "" : cardinal(dir)}</span>
       <span class="vis-dia" title="visibilidad mínima del día"><small>vis mín</small>${chipVis(vMin, " km")}</span>
-      <span>${tor ? `<span style="color:var(--l-amarillo)" title="tormenta">${ic("tormenta")}</span>` : ""}</span>
       <span class="chev">${ic("chev")}</span></summary>
       ${tiraHoras(hs, false)}</details>`;
   }).join("");

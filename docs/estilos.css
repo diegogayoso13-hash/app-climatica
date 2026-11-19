@@ -95,23 +95,31 @@
 .app[data-tema="noche"] .bf::after { content: ""; position: absolute; left: 0; bottom: 0; height: 3px; width: calc(var(--fz) * 11.1%); background: var(--texto); border-radius: 2px; }
 
 /* Pronostico */
-.app .tira { display: flex; overflow-x: auto; gap: 4px; padding-bottom: 6px; scroll-snap-type: x proximity; }
+.app .tira { display: flex; overflow-x: auto; gap: 4px; padding-bottom: 3px; scroll-snap-type: x proximity; scrollbar-width: thin; scrollbar-color: var(--borde) transparent; }
+.app .tira::-webkit-scrollbar { height: 3px; }
+.app .tira::-webkit-scrollbar-thumb { background: var(--borde); border-radius: 2px; }
 .app .col { flex: none; width: 52px; text-align: center; padding: 6px 2px; border-radius: 8px; scroll-snap-align: start; display: grid; gap: 4px; justify-items: center; font-size: .82rem; }
-.app .col .h { font-weight: 700; color: var(--texto); }
+.app .col .h { font-weight: 700; color: var(--texto); display: flex; align-items: center; gap: 1px; white-space: nowrap; }
+.app .col .ic-h { display: inline-flex; color: var(--l-amarillo); }
+.app .col .ic-h.lluvia { color: var(--suave); }
+.app .col .ic-h svg { width: 13px; height: 13px; }
+.app .col .bf, .app .col .vis { width: 40px; min-width: 0; box-sizing: border-box; }
 .app .col .g { color: var(--suave); font-size: .78rem; }
 .app .col .dir { display: grid; justify-items: center; color: var(--suave); font-size: .7rem; }
 .app .col .dir svg { width: 20px; height: 20px; color: var(--texto); }
-.app .col .tor { height: 18px; color: var(--l-amarillo); }
 .app .col.nuevo-dia { border-left: 1px solid var(--borde); border-radius: 0; }
 .app .col.cab { text-align: left; justify-items: start; color: var(--suave); font-size: .7rem; width: 44px; }
 .app .dias { margin-top: 10px; border-top: 1px solid var(--borde); }
 .app .dia { border-bottom: 1px solid var(--borde); }
-.app .dia summary { list-style: none; cursor: pointer; min-height: 52px; display: grid; grid-template-columns: 66px 44px 44px 1fr 64px 22px 20px; gap: 8px; align-items: center; }
+.app .dia summary { list-style: none; cursor: pointer; min-height: 52px; display: grid; grid-template-columns: minmax(0, 1fr) 40px 34px 50px 58px 16px; gap: 6px; align-items: center; }
+.app .dia summary .bf { min-width: 0; width: 40px; box-sizing: border-box; }
 .app .dia summary::-webkit-details-marker { display: none; }
 .app .dia .nom { font-weight: 600; }
 .app .dia .nom small { display: block; font-weight: 400; color: var(--suave); font-size: .72rem; }
+.app .dia .nom .tor-dia { display: flex; align-items: center; gap: 2px; color: var(--l-amarillo); font-weight: 600; }
+.app .dia .nom .tor-dia svg { width: 14px; height: 14px; flex: none; }
 .app .dia .raf { color: var(--suave); font-size: .85rem; }
-.app .dia .dd { display: flex; gap: 4px; align-items: center; font-size: .85rem; color: var(--suave); }
+.app .dia .dd { display: flex; gap: 2px; align-items: center; font-size: .85rem; color: var(--suave); white-space: nowrap; }
 .app .dia .dd svg { color: var(--texto); }
 .app .dia .chev { color: var(--suave); transition: transform .15s; }
 .app .dia[open] .chev, .app .plegable[open] > summary .chev { transform: rotate(180deg); }
@@ -240,16 +248,18 @@ body { margin: 0; background: var(--fondo); }
 
 /* Visibilidad pronosticada */
 .app .vis { display: inline-block; width: 44px; box-sizing: border-box; padding: 2px 4px; border-radius: 6px; font-size: .75rem; font-weight: 600; text-align: center; color: var(--suave); white-space: nowrap; }
+.app .vis-ok { color: var(--texto); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--suave) 30%, transparent); background: color-mix(in srgb, var(--suave) 12%, transparent); }
 .app .vis-rojo { --c: var(--l-rojo); color: var(--c); font-weight: 700; box-shadow: inset 0 0 0 1px var(--c); background: color-mix(in srgb, var(--c) 16%, transparent); }
 .app .vis-amarillo { --c: var(--l-amarillo); color: var(--c); font-weight: 700; box-shadow: inset 0 0 0 1px var(--c); background: color-mix(in srgb, var(--c) 10%, transparent); }
 .app .col .vis-cab { font-size: .7rem; line-height: 1.1; min-height: 22px; display: grid; align-items: center; white-space: nowrap; }
-.app .dia .vis-dia { display: grid; justify-items: end; gap: 1px; font-size: .75rem; color: var(--suave); }
+.app .dia .vis-dia { display: grid; justify-items: center; gap: 2px; font-size: .75rem; color: var(--suave); }
 .app .dia .vis-dia small { font-size: .65rem; line-height: 1; }
-.app .dia .vis-dia .vis { width: 60px; }
+.app .dia .vis-dia .vis { width: 58px; }
 .app .nota-vis { margin-top: 2px; }
-/* Noche: sin colores; rojo con fondo marcado, amarillo solo con borde */
-.app[data-tema="noche"] .vis-rojo { background: #5A1810; box-shadow: none; color: #FFB3A8; }
-.app[data-tema="noche"] .vis-amarillo { background: none; box-shadow: inset 0 0 0 1px var(--texto); }
+/* Noche: lleno = peligro, contorno grueso = atencion, nada = bien (todo en el rojo del modo noche) */
+.app[data-tema="noche"] .vis-rojo { background: var(--texto); box-shadow: none; color: #000; font-weight: 800; }
+.app[data-tema="noche"] .vis-amarillo { background: none; box-shadow: inset 0 0 0 2px var(--texto); color: var(--texto); font-weight: 800; }
+.app[data-tema="noche"] .vis-ok { background: none; box-shadow: none; color: var(--suave); opacity: .7; font-weight: 400; }
 .app .corrida-ok { color: var(--texto); }
 .app .corrida-vieja { color: var(--l-amarillo); font-weight: 600; }
 
