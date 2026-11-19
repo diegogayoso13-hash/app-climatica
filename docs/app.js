@@ -319,13 +319,13 @@ const INFO = {
   agua: ["Agua en el canal", () => `Agua disponible = profundidad del tramo (tabla "Anchos navegables" de la CARP, cero LIMB) + marea del tramo. La marea del tramo es la más baja de sus dos estaciones con dato de menos de ${VIEJO_MIN} min: si erramos, que muestre menos agua. Colores (con calado cargado): rojo, quedan menos que el margen bajo la quilla (mínimo 0,60 m, REMAGA 2019, art. 2.9); amarillo, hasta el margen + el colchón; verde, más; gris, sin marea reciente (nunca verde). Referencia, no reemplaza al práctico ni a la información oficial. Calcula con el calado del buque detenido: navegando, el buque se hunde un poco más (squat).`],
   tendencia: ["Tendencia próximas 3 h", () => `Predicción propia, no oficial: marea astronómica de cada estación (componentes calculadas con el historial de la CARP) corregida con la diferencia de ahora entre lo real y lo astronómico (el efecto del viento). Del lado seguro: predicción menos el error medido (${ERROR_TENDENCIA.map((e) => m2(e)).join(" / ")} m) a 1, 2 y 3 h. "Sube / baja / se mantiene" sale de la predicción sin restar (se mantiene si cambia menos de 5 cm). El mínimo esperado mira todos los tramos. Nada más allá de 3 h.`],
   limb: ["Cero LIMB y horas", () => "Las alturas de marea están en metros sobre el LIMB (Límite Inferior de la Media de todas las Bajamares), el cero que usa la CARP. Hora de Uruguay (UTC-3). Viento en nudos."],
-  vis: ["Visibilidad", () => `Visibilidad pronosticada por Open-Meteo (ECMWF 9 km y GFS; por hora se usa el valor más bajo). No hay medición real en el canal. Rojo: menos de ${VIS_ROJO.toLocaleString("es-UY")} m (REMAGA 2019, art. 2.7.3); amarillo: menos de ${VIS_AMARILLO / 1000} km (Tabla II). La hora de la corrida va en gris si tiene más de 12 h (Open-Meteo no respondió).`],
+  vis: ["Visibilidad", (corridas = "") => `Visibilidad pronosticada por Open-Meteo (ECMWF 9 km y GFS; por hora se usa el valor más bajo). No hay medición real en el canal. En km; de 10 km para arriba dice "+10"; en cada día, la mínima del día. Rojo: menos de 1 km (REMAGA 2019, art. 2.7.3: mínimo para navegar). Amarillo: de 1 a menos de 3 km (corte elegido por Diego), o de 1 a menos de 8 km si en "Mi buque" hay un buque grande (REMAGA, Tabla II). ${esGrande(aguaAj.eslora ?? null, aguaAj.manga ?? null) ? "Ahora se usa 8 km (tu buque es grande)." : "Ahora se usa 3 km."}${corridas ? ` Corridas: ${corridas}.` : ""} Hay corrida nueva cada 6 h y llega unas 7 h después, así que es normal que tenga entre 7 y 14 h; si tiene más de ${VIS_CORRIDA_ATRASADA_H} h se avisa "atrasada" (se perdió al menos una corrida).`],
   pronostico: ["Pronóstico", () => "Promedio de los modelos ECMWF, GFS e ICON en el Pilote Norden. En cada día: viento y ráfaga máximos en nudos, dirección predominante y visibilidad mínima. Tocá un día para verlo hora por hora."],
   sohma: ["Novedades del canal", () => `Balizamiento y radioavisos del aviso diario del SOHMA (Armada), solo del Canal Martín García (km 39 a 145,5). "Visto desde": primer día que el robot lo vio en los avisos del SOHMA (el SOHMA no informa desde cuándo está cada novedad). Las notas son tuyas, no oficiales, y quedan solo en este celular.`],
   remaga: ["REMAGA 2019", () => "Reglamento de Uso y Navegación del Canal Martín García, versión 2019 (CARP), publicado en el Boletín Oficial argentino el 22/03/2019. Es información fija copiada del reglamento: ante cualquier duda vale el texto oficial y lo que disponga la Autoridad Marítima. La dirección del viento de la Tabla II no se evalúa porque el texto no aclara cómo se aplica."],
   fuentes: ["Fuentes", () => "CARP (Norden, Colonia, Conchillas, Carmelo y tabla de tramos), Armada Nacional (SOHMA y estación Colonia), Open-Meteo (ECMWF, GFS, ICON), SMN (alertas). Esta app es una ayuda: no reemplaza la consulta de las fuentes oficiales para tomar decisiones de seguridad."],
 };
-const info = (k) => `<button type="button" class="info-b" data-info="${k}" aria-label="Más información" aria-expanded="false">i</button><span class="info-t" hidden>${esc(INFO[k][1]())}</span>`;
+const info = (k, ...a) => `<button type="button" class="info-b" data-info="${k}" aria-label="Más información" aria-expanded="false">i</button><span class="info-t" hidden>${esc(INFO[k][1](...a))}</span>`;
 
 // ---------- canal: resumen y agua por tramo ----------
 function canalAgua(d, ix, aj, cd) {
@@ -528,7 +528,7 @@ function remagaSecs(d, ix, aj) {
     cuerpo += `<p>Marea mínima: <strong>${m2(mMin)} m</strong> sobre el cero LIMB${mMin === MAREA_MIN_REDUCIDA ? " (reducida: calás menos de lo admitido)" : ""}<br>
       ${mb ? `${tilde(okMarea)} Ahora la más baja: ${NOM_CORTO[mb.id]} ${m2(mb.v)} m (${hora(mb.ts)})` : "Sin marea reciente: no se puede comparar."}</p>
       <p>Ahora (Tabla II): ${t2.cumple ? `${tilde(true)} <strong>se cumple</strong>` : t2.fallas.length ? `${tilde(false)} <strong>no se cumple</strong> (${t2.fallas.join(" y ")})` : `<strong>no se puede evaluar</strong> (falta ${t2.faltan.join(" y ")})`}<br>
-      · Visibilidad pronosticada: ${t2.vis == null ? "sin dato" : `${fmtVis(t2.vis)}${t2.vis >= 1000 ? " km" : ""} ${tilde(t2.vis >= VIS_MIN_GRANDE)}`} <small>(hace falta 8 km o más)</small><br>
+      · Visibilidad pronosticada: ${t2.vis == null ? "sin dato" : `${fmtVis(t2.vis)} km ${tilde(t2.vis >= VIS_MIN_GRANDE)}`} <small>(hace falta 8 km o más)</small><br>
       · Viento real en Norden: ${t2.viento == null ? "sin dato nuevo" : `${n1(t2.viento)} kn ${tilde(t2.viento <= VIENTO_MAX_GRANDE_KN)}`} <small>(máximo 25 km/h = 13,5 kn)</small><br>
       · Dirección: no se evalúa</p>
       <p class="nota">REMAGA 2019, art. 2.10 y Tablas I y II ${info("remaga")}</p>`;
@@ -584,12 +584,15 @@ function remagaSecs(d, ix, aj) {
 
 // ---------- visibilidad pronosticada (Open-Meteo: ECMWF 9 km y GFS) ----------
 // Limites del REMAGA 2019. Para cambiarlos, tocar solo estos dos numeros (en metros).
-const VIS_ROJO = 1000;     // art. 2.7.3: minimo para iniciar la navegacion
-const VIS_AMARILLO = 8000; // Tabla II: limite para buques grandes
-const claseVis = (m) => m == null ? "" : m < VIS_ROJO ? "vis-rojo" : m < VIS_AMARILLO ? "vis-amarillo" : "";
-const fmtVis = (m) => m == null ? "s/d" : m < 1000 ? `${Math.round(m / 10) * 10} m`
-  : m < 10000 ? (Math.floor(m / 100) / 10).toLocaleString("es-UY") : String(Math.floor(m / 1000));
-const chipVis = (m) => `<span class="vis ${claseVis(m)}">${fmtVis(m)}</span>`;
+const VIS_ROJO = 1000;     // art. 2.7.3: minimo para iniciar la navegacion (para todos)
+const VIS_AMARILLO = 3000; // elegido por Diego (buque comun o sin buque cargado)
+// Buque grande (Tabla II): amarillo hasta VIS_MIN_GRANDE (8 km).
+const visAmarillo = () => esGrande(aguaAj.eslora ?? null, aguaAj.manga ?? null) ? VIS_MIN_GRANDE : VIS_AMARILLO;
+const VIS_CORRIDA_ATRASADA_H = 18; // normal: 7 a 14 h (corrida cada 6 h, llega ~7 h despues)
+const claseVis = (m) => m == null ? "" : m < VIS_ROJO ? "vis-rojo" : m < visAmarillo() ? "vis-amarillo" : "";
+// En km, una decimal redondeada para abajo (del lado seguro); de 10 km para arriba "+10".
+const fmtVis = (m) => m == null ? "s/d" : m >= 10000 ? "+10" : (Math.floor(m / 100) / 10).toLocaleString("es-UY");
+const chipVis = (m, km = "") => `<span class="vis ${claseVis(m)}">${fmtVis(m)}${m == null ? "" : km}</span>`;
 // Por hora, el valor MAS BAJO de los modelos que tengan dato (errar del lado seguro).
 function visMapa(filas) {
   const m = new Map();
@@ -608,12 +611,18 @@ function nieblaProxima(filas) {
 }
 
 // ---------- pronostico ----------
-const columna = (p, nuevoDia) => `<div class="col ${nuevoDia ? "nuevo-dia" : ""}">
+// El renglon de tormenta/lluvia va al final y solo si alguna hora de esa tira lo usa (asi no queda un hueco en el medio).
+const conIcono = (p) => p.tormenta || p.lluvia >= 0.5;
+const columna = (p, nuevoDia, tor) => `<div class="col ${nuevoDia ? "nuevo-dia" : ""}">
     <div class="h">${hora(p.t).slice(0, 2)}h</div>${bf(p.v)}<div class="g">${n0(p.g)}</div>
     <div class="dir">${flecha(p.dir)}${p.dir == null ? "" : cardinal(p.dir)}</div>
-    <div class="tor" title="${p.tormenta ? `${p.tormenta} de ${p.n} modelos dan tormenta` : ""}">${p.tormenta ? ic("tormenta") : p.lluvia >= 0.5 ? ic("lluvia") : ""}</div>
-    ${chipVis(p.vis)}</div>`;
-const cabecera = `<div class="col cab"><div class="h">hora</div><div style="min-height:27px;display:grid;align-items:center">viento</div><div class="g">ráfaga</div><div class="dir" style="min-height:34px">de</div><div class="tor"></div><div class="vis-cab">visib.<br>km</div></div>`;
+    ${chipVis(p.vis)}
+    ${tor ? `<div class="tor" title="${p.tormenta ? `${p.tormenta} de ${p.n} modelos dan tormenta` : ""}">${p.tormenta ? ic("tormenta") : p.lluvia >= 0.5 ? ic("lluvia") : ""}</div>` : ""}</div>`;
+const cabecera = (tor) => `<div class="col cab"><div class="h">hora</div><div style="min-height:27px;display:grid;align-items:center">viento</div><div class="g">ráfaga</div><div class="dir" style="min-height:34px;align-content:center">de</div><div class="vis-cab">vis. km</div>${tor ? '<div class="tor"></div>' : ""}</div>`;
+const tiraHoras = (hs, marcarDia) => {
+  const tor = hs.some(conIcono); let ant = fDiaClave.format(new Date(hs[0].t));
+  return `<div class="tira">${cabecera(tor)}${hs.map((p) => { const k = fDiaClave.format(new Date(p.t)), n = marcarDia && k !== ant; ant = k; return columna(p, n, tor); }).join("")}</div>`;
+};
 function pronostico(filas, config, vis) {
   const punto = config?.find((c) => c.clave === "punto_pronostico")?.valor;
   const vm = visMapa(vis);
@@ -634,25 +643,25 @@ function pronostico(filas, config, vis) {
       <span class="nom">${i === 0 ? "Mañana" : esc(fD.format(new Date(hs[0].t)))}${hs.length < 20 ? `<small>hasta ${hora(hs.at(-1).t).slice(0, 2)} h</small>` : ""}</span>
       ${bf(vMax)}<span class="raf">r ${n0(gMax)}</span>
       <span class="dd">${flecha(dir)}${dir == null ? "" : cardinal(dir)}</span>
-      <span class="vis-dia" title="visibilidad mínima del día">${vMin != null && vMin >= 1000 ? `<small>vis</small> ` : ""}${chipVis(vMin)}</span>
+      <span class="vis-dia" title="visibilidad mínima del día"><small>vis mín</small>${chipVis(vMin, " km")}</span>
       <span>${tor ? `<span style="color:var(--l-amarillo)" title="tormenta">${ic("tormenta")}</span>` : ""}</span>
       <span class="chev">${ic("chev")}</span></summary>
-      <div class="tira">${cabecera}${hs.map((p) => columna(p)).join("")}</div></details>`;
+      ${tiraHoras(hs, false)}</details>`;
   }).join("");
   const modelos = [...new Set(filas.map((f) => f.modelo))].sort();
   const corridas = modelos.map((mo) => { const c = filas.find((f) => f.modelo === mo)?.corrida; return `${mo.toUpperCase()} ${c ? fechaHora(c) : "?"}`; });
-  let diaAnt = fDiaClave.format(new Date(prox[0].t));
   const sinVis = !prox.some((p) => p.vis != null);
-  // De que corrida sale la visibilidad: si Open-Meteo no respondio, puede ser vieja (gris si tiene mas de 12 h).
-  const corrVis = [...new Set((vis ?? []).map((f) => f.modelo))].sort().map((mo) => {
+  // De que corrida sale la visibilidad (va dentro de la (i)). Atrasada = mas de 18 h (se perdio al menos una corrida).
+  const cv = [...new Set((vis ?? []).map((f) => f.modelo))].sort().map((mo) => {
     const c = (vis ?? []).filter((f) => f.modelo === mo).map((f) => f.corrida).sort().pop();
-    const vieja = minDesde(c) > 12 * 60;
-    return `<span class="${vieja ? "corrida-vieja" : "corrida-ok"}">${mo === "ecmwf" ? "ECMWF" : mo.toUpperCase()}: corrida de las ${hora(c)}${fDiaClave.format(new Date(c)) !== fDiaClave.format(new Date()) ? ` del ${fD.format(new Date(c))}` : ""}${vieja ? " (más de 12 h)" : ""}</span>`;
-  }).join(" · ");
+    return { mo: mo === "ecmwf" ? "ECMWF" : mo.toUpperCase(), c, atrasada: minDesde(c) > VIS_CORRIDA_ATRASADA_H * 60 };
+  });
+  const corrVis = cv.map((x) => `${x.mo} de las ${hora(x.c)}${fDiaClave.format(new Date(x.c)) !== fDiaClave.format(new Date()) ? ` del ${fD.format(new Date(x.c))}` : ""}${x.atrasada ? " (atrasada)" : ""}`).join(" · ");
+  const atrasadas = cv.filter((x) => x.atrasada).map((x) => x.mo);
   return `<section class="tarjeta" id="sec-pron">
     <h2 class="titulo">Pronóstico <span>próximas 24 h · ${esc(punto?.nombre ?? "Norden")}</span></h2>
-    <div class="tira">${cabecera}${prox.map((p) => { const k = fDiaClave.format(new Date(p.t)); const n = k !== diaAnt; diaAnt = k; return columna(p, n); }).join("")}</div>
-    <p class="nota nota-vis">${sinVis ? "<strong>Visibilidad: sin dato.</strong> " : ""}Visibilidad pronosticada (Open-Meteo), no medida${corrVis ? ` · ${corrVis}` : ""} ${info("vis")}</p>
+    ${tiraHoras(prox, true)}
+    <p class="nota nota-vis">${sinVis ? "<strong>Visibilidad: sin dato.</strong>" : "Visibilidad pronosticada, no medida"}${atrasadas.length ? ` · <span class="corrida-vieja">${atrasadas.join(" y ")} atrasada${atrasadas.length > 1 ? "s" : ""}</span>` : ""} ${info("vis", corrVis)}</p>
     <div class="dias">${filasDia}</div>
     <p class="nota">Promedio de los modelos · ${corridas.join(" · ")} ${info("pronostico")}</p>
   </section>`;
@@ -888,9 +897,9 @@ function render(d) {
   const robotMal = (d.fuentes ?? []).some(malFuente);
   if (ajustesNodo.isConnected) ajustesNodo.remove(); // el formulario se conserva entre actualizaciones (no se pierde lo que estas escribiendo)
   raiz.innerHTML = barra(d, cd, ag.c) + `<main>
-    <div class="pestana" data-p="tiempo">${norden(ix, d.pron6 ?? [])}${pronostico(d.pronostico ?? [], d.config, d.vis ?? [])}${marea(d.l24 ?? [])}${otras(ix, nombre)}${alertasSec(d)}</div>
+    <div class="pestana" data-p="tiempo">${norden(ix, d.pron6 ?? [])}${pronostico(d.pronostico ?? [], d.config, d.vis ?? [])}${realVsPron(d)}${marea(d.l24 ?? [])}${otras(ix, nombre)}${alertasSec(d)}</div>
     <div class="pestana" data-p="canal">${ag.resumen}<button type="button" class="abrir-mapa" data-abrir-mapa="1"><span aria-hidden="true">🗺</span> Abrir mapa del canal</button>${ag.tramos}${canal(d, cd)}${remagaSecs(d, ix, aguaAj)}</div>
-    <div class="pestana" data-p="mas"><div id="hueco-ajustes"></div>${realVsPron(d)}${robot(d)}${fuentesSec()}</div></main>
+    <div class="pestana" data-p="mas"><div id="hueco-ajustes"></div>${robot(d)}${fuentesSec()}</div></main>
     <nav class="pestanas" aria-label="Secciones">${PESTANAS.map(([p, n]) => `<button type="button" data-pestana="${p}" aria-current="${p === pestana ? "page" : "false"}">${ic(p)}<span>${n}</span>${p === "mas" && robotMal ? '<i class="punto-mas" title="El robot tiene un problema"></i>' : ""}</button>`).join("")}</nav>`;
   raiz.querySelector("#hueco-ajustes").replaceWith(ajustesNodo);
   verPestana(pestana, { arriba: false });

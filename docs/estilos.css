@@ -239,17 +239,19 @@ body { margin: 0; background: var(--fondo); }
 .app[data-tema="noche"] .tramo .tr-nom small.una { color: var(--texto); }
 
 /* Visibilidad pronosticada */
-.app .vis { display: inline-block; min-width: 40px; padding: 2px 4px; border-radius: 6px; font-size: .75rem; font-weight: 600; text-align: center; color: var(--suave); white-space: nowrap; }
+.app .vis { display: inline-block; width: 44px; box-sizing: border-box; padding: 2px 4px; border-radius: 6px; font-size: .75rem; font-weight: 600; text-align: center; color: var(--suave); white-space: nowrap; }
 .app .vis-rojo { --c: var(--l-rojo); color: var(--c); font-weight: 700; box-shadow: inset 0 0 0 1px var(--c); background: color-mix(in srgb, var(--c) 16%, transparent); }
 .app .vis-amarillo { --c: var(--l-amarillo); color: var(--c); font-weight: 700; box-shadow: inset 0 0 0 1px var(--c); background: color-mix(in srgb, var(--c) 10%, transparent); }
-.app .col .vis-cab { font-size: .7rem; line-height: 1.1; min-height: 22px; }
-.app .dia .vis-dia { text-align: right; font-size: .75rem; color: var(--suave); }
+.app .col .vis-cab { font-size: .7rem; line-height: 1.1; min-height: 22px; display: grid; align-items: center; white-space: nowrap; }
+.app .dia .vis-dia { display: grid; justify-items: end; gap: 1px; font-size: .75rem; color: var(--suave); }
+.app .dia .vis-dia small { font-size: .65rem; line-height: 1; }
+.app .dia .vis-dia .vis { width: 60px; }
 .app .nota-vis { margin-top: 2px; }
 /* Noche: sin colores; rojo con fondo marcado, amarillo solo con borde */
 .app[data-tema="noche"] .vis-rojo { background: #5A1810; box-shadow: none; color: #FFB3A8; }
 .app[data-tema="noche"] .vis-amarillo { background: none; box-shadow: inset 0 0 0 1px var(--texto); }
 .app .corrida-ok { color: var(--texto); }
-.app .corrida-vieja { color: var(--suave); opacity: .75; font-style: italic; }
+.app .corrida-vieja { color: var(--l-amarillo); font-weight: 600; }
 
 /* Tendencia proximas 3 h */
 .app .tendencia { margin-top: 10px; border: 1px solid var(--borde); border-radius: 10px; padding: 10px 12px; }
