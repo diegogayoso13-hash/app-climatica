@@ -1,4 +1,4 @@
-// ---------- Mapa del canal (pantalla completa) ----------
+// ---------- Mapa del canal (pestana Mapa: ocupa todo entre la barra y las pestanas) ----------
 // Usa: senales.json (6 columnas de la planilla de la CARP), Leaflet (en vendor/, se carga al abrir el mapa)
 // y fondo de OpenStreetMap. Sin señal, el canal, los tramos y las señales se dibujan igual (no dependen del fondo).
 
@@ -181,7 +181,7 @@ function textoPosicion(pos, ahora = Date.now()) {
   } else det.push(`a ${(r.dist / 1000).toLocaleString("es-UY", { maximumFractionDigits: 1 })} km del eje del canal`);
   det.push(`Precisión del GPS ±${Math.round(accuracy)} m`);
   return `<span class="mp-l1">${l1}</span>${ag ? `<span class="mp-l2 ${ag.clase}">${ag.html}</span>` : ""}`
-    + (GPS.info ? `<span class="mp-det">${det.filter(Boolean).map((x) => `<span class="mp-d">${x}</span>`).join("")}<span class="mp-aclara">${ACLARA_VEL}</span></span>` : `<span class="mp-mas" aria-hidden="true">▾</span>`);
+    + (GPS.info ? `<span class="mp-det">${det.filter(Boolean).map((x) => `<span class="mp-d">${x}</span>`).join("")}<span class="mp-aclara">${ACLARA_VEL}</span>${BTN_APAGAR_GPS}</span>` : `<span class="mp-mas" aria-hidden="true">▾</span>`);
 }
 function pintarPosicion() {
   if (!GPS.ultima) return;
@@ -199,29 +199,45 @@ function mostrarPosicion(pos) {
     GPS.circulo = L.circle(ll, { radius: pos.coords.accuracy, color: varCss("--acento"), weight: 1, fillOpacity: 0.12, interactive: false }).addTo(MAPA.map);
     GPS.marca = L.marker(ll, { icon: L.divIcon({ className: "yo", html: '<span class="yo-punto"></span>', iconSize: [22, 22], iconAnchor: [11, 11] }), zIndexOffset: 2000, keyboard: false }).addTo(MAPA.map);
   } else { GPS.marca.setLatLng(ll); GPS.circulo.setLatLng(ll).setRadius(pos.coords.accuracy); }
-  if (!GPS.centrado) { MAPA.map.setView(ll, Math.max(MAPA.map.getZoom(), 13)); GPS.centrado = true; }
+  if (!GPS.centrado && document.getElementById("panel-mapa")?.hidden === false) { MAPA.map.setView(ll, Math.max(MAPA.map.getZoom(), 13)); GPS.centrado = true; } // en otra pestana: centra al volver
   pintarPosicion();
 }
 function errorPosicion(e) {
-  const el = document.getElementById("mapa-pos"); el.hidden = false;
-  el.textContent = e.code === 1 ? "Sin permiso para usar el GPS (se cambia en los ajustes del navegador)." : e.code === 3 ? "Buscando GPS…" : "No se pudo obtener la posición.";
   if (e.code === 1) { guardarLocal("gps_activado", false); detenerGps(); }
+  const el = document.getElementById("mapa-pos"); el.hidden = false;
+  el.innerHTML = `<span>${e.code === 1 ? "Sin permiso para usar el GPS (se cambia en los ajustes del navegador)." : e.code === 3 ? "Buscando GPS…" : "No se pudo obtener la posición."}</span>${GPS.watch != null ? BTN_APAGAR_GPS : ""}`;
 }
+// Boton del pin: NUNCA apaga el GPS (navegando no se apaga por error). Apagado: lo prende. Prendido: centra en tu posicion.
+// Se apaga con "Apagar GPS", dentro del detalle del cartel de posicion (o al cerrar la app).
+function tocarPin() {
+  if (GPS.watch == null) { iniciarGps(); return; }
+  if (GPS.ultima && MAPA) MAPA.map.setView([GPS.ultima.coords.latitude, GPS.ultima.coords.longitude], Math.max(MAPA.map.getZoom(), 13));
+}
+const BTN_APAGAR_GPS = '<button type="button" class="mp-apagar" data-apagar-gps="1">Apagar GPS</button>';
 function iniciarGps() {
   if (!("geolocation" in navigator)) { errorPosicion({ code: 2 }); return; }
-  if (GPS.watch != null) { if (GPS.ultima && MAPA) MAPA.map.setView([GPS.ultima.coords.latitude, GPS.ultima.coords.longitude]); return; } // ya andaba: centrar
+  if (GPS.watch != null) return;
   GPS.centrado = false; GPS.hist = []; GPS.sentido = 0; // cada vez que se prende, el recorrido arranca de cero
   GPS.watch = navigator.geolocation.watchPosition(mostrarPosicion, errorPosicion, { enableHighAccuracy: true, maximumAge: 5000, timeout: 30000 });
   GPS.reloj = setInterval(pintarPosicion, 5000); // la hora de paso y el "sin dato" se actualizan aunque no llegue posicion nueva
   guardarLocal("gps_activado", true);
-  document.getElementById("btn-gps")?.classList.add("activo");
-  const el = document.getElementById("mapa-pos"); el.hidden = false; el.textContent = "Buscando GPS…";
+  avisarGps();
+  const el = document.getElementById("mapa-pos"); el.hidden = false; el.innerHTML = `<span>Buscando GPS…</span>${BTN_APAGAR_GPS}`;
 }
 function detenerGps() {
   if (GPS.watch != null) navigator.geolocation.clearWatch(GPS.watch);
   clearInterval(GPS.reloj);
-  GPS.watch = null; GPS.centrado = false; GPS.reloj = null; GPS.hist = []; GPS.sentido = 0;
-  document.getElementById("btn-gps")?.classList.remove("activo");
+  GPS.watch = null; GPS.centrado = false; GPS.reloj = null; GPS.hist = []; GPS.sentido = 0; GPS.ultima = null; GPS.info = false;
+  if (GPS.marca) { GPS.marca.remove(); GPS.circulo.remove(); GPS.marca = GPS.circulo = null; } // apagado: no queda un punto viejo en el mapa
+  const el = document.getElementById("mapa-pos"); if (el) { el.hidden = true; el.textContent = ""; }
+  avisarGps();
+}
+// Boton del pin, puntito en la pestana Mapa y cartel de version nueva (no recarga con el GPS prendido)
+function avisarGps() {
+  const on = GPS.watch != null, b = document.getElementById("btn-gps");
+  if (b) { b.classList.toggle("activo", on); b.setAttribute("aria-label", on ? "GPS prendido: centrar en mi posición" : "Prender GPS (mi posición)"); b.title = on ? "GPS prendido · tocá para centrar" : "Prender GPS"; }
+  if (typeof marcarGps === "function") marcarGps();
+  if (typeof cartelVersion === "function" && document.getElementById("cartel-version")) cartelVersion();
 }
 
 // ----- fondeaderos (REMAGA 2019, art. 2.13) -----
@@ -256,24 +272,29 @@ function panelMapa() {
   let p = document.getElementById("panel-mapa");
   if (p) return p;
   p = document.createElement("div"); p.id = "panel-mapa"; p.className = "panel-mapa"; p.hidden = true;
-  p.innerHTML = `<header class="mapa-barra"><button type="button" class="btn-icono" id="btn-cerrar-mapa" aria-label="Volver">←</button><strong>Mapa del canal</strong><span class="mapa-act" id="mapa-act"></span></header>
-    <div class="mapa-cont"><div id="mapa" class="mapa"></div>
-      <button type="button" class="btn-gps" id="btn-gps" aria-label="Mi posición" title="Mi posición (GPS)">📍</button>
+  p.innerHTML = `<div class="mapa-cont"><div id="mapa" class="mapa"></div>
+      <button type="button" class="btn-gps" id="btn-gps" aria-label="Prender GPS (mi posición)" title="Prender GPS">📍</button>
       <div class="mapa-pos" id="mapa-pos" role="button" tabindex="0" aria-expanded="false" aria-label="Posición: tocá para ver el detalle" hidden></div></div>
     <details class="mapa-pie" id="mapa-pie"><summary><span>Posiciones de referencia; pueden no reflejar cambios recientes.</span><span class="chev-m">Leyenda ▾</span></summary><div id="mapa-leyenda"></div></details>`;
   document.body.appendChild(p);
-  p.querySelector("#btn-cerrar-mapa").addEventListener("click", () => history.state?.mapa ? history.back() : cerrarMapa());
-  p.querySelector("#btn-gps").addEventListener("click", () => iniciarGps());
+  p.querySelector("#btn-gps").addEventListener("click", tocarPin);
   const cartel = p.querySelector("#mapa-pos");
   const alternar = () => { if (!GPS.ultima) return; GPS.info = !GPS.info; pintarPosicion(); };
-  cartel.addEventListener("click", alternar);
-  cartel.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); alternar(); } });
+  cartel.addEventListener("click", (ev) => { if (ev.target.closest("[data-apagar-gps]")) { detenerGps(); return; } alternar(); });
+  cartel.addEventListener("keydown", (ev) => { if (ev.target.closest("[data-apagar-gps]")) return; if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); alternar(); } });
   return p;
 }
-async function abrirMapa() {
+// Se muestra al entrar a la pestana Mapa. El GPS NO se prende solo: solo con el pin.
+let cargandoMapa = null;
+function mostrarMapa() {
   const p = panelMapa();
+  const yaVisible = !p.hidden;
   p.hidden = false; document.documentElement.classList.add("con-mapa");
-  if (!history.state?.mapa) history.pushState({ mapa: 1 }, "", "#mapa");
+  if (MAPA) { if (!yaVisible) setTimeout(() => { MAPA.map.invalidateSize(); dibujarMapa(ultimos); if (GPS.ultima && !GPS.centrado) { MAPA.map.setView([GPS.ultima.coords.latitude, GPS.ultima.coords.longitude], Math.max(MAPA.map.getZoom(), 13)); GPS.centrado = true; } }, 0); return; }
+  cargandoMapa ??= cargarMapa().finally(() => { cargandoMapa = null; });
+  return cargandoMapa;
+}
+async function cargarMapa() {
   try {
     await cargarLeaflet();
     const ss = await cargarSenales();
@@ -286,17 +307,16 @@ async function abrirMapa() {
     }
     setTimeout(() => MAPA.map.invalidateSize(), 50);
     dibujarMapa(ultimos);
-    if (leerLocal("gps_activado")) iniciarGps(); // si ya diste permiso, arranca solo
+    avisarGps();
   } catch (e) {
     document.getElementById("mapa").innerHTML = `<p style="padding:16px">${esc(e.message)}. Probá de nuevo con señal.</p>`;
   }
 }
-function cerrarMapa() {
+// Al ir a otra pestana: se oculta el mapa pero el GPS SIGUE (mismo recorrido y promedio). Se apaga con el pin o al cerrar la app.
+function ocultarMapa() {
   const p = document.getElementById("panel-mapa"); if (p) p.hidden = true;
-  detenerGps(); // no gastar bateria con el mapa cerrado
   document.documentElement.classList.remove("con-mapa");
 }
-window.addEventListener("popstate", () => { if (!history.state?.mapa) cerrarMapa(); else if (document.getElementById("panel-mapa")?.hidden) abrirMapa(); });
 
 function dibujarMapa(d) {
   if (!MAPA || !d || !SENALES) return;
@@ -341,7 +361,6 @@ function dibujarMapa(d) {
       .bindPopup(`<strong>km ${kmTxt(s.km)} · ${esc(s.tipo)}${s.color ? ` ${esc(s.color)}` : ""}</strong><br>Destello: ${esc(s.destello || "–")}${n ? `<br><strong>SOHMA Nº ${esc(n.clave)}: ${esc(estado)}</strong> · ${n.normalizada_en ? `normalizada ${fechaHora(n.normalizada_en)}` : `visto desde ${fechaHora(n.primera_vez)}`}${misNotas[n.clave] ? `<br>Tu nota (solo en este celular): ${esc(misNotas[n.clave].texto)}` : ""}` : ""}`).addTo(capa);
   }
   // Leyenda y listas aparte
-  document.getElementById("mapa-act").textContent = sinSenal ? "sin señal" : `act. ${hora(Date.now())}`;
   document.getElementById("mapa-leyenda").innerHTML = `
     <div class="ley-fila"><span><i class="sm sm-roja"></i>lateral roja (estribor)</span><span><i class="sm sm-verde"></i>lateral verde (babor)</span><span><i class="sm sm-cardinal"></i>cardinal</span><span><i class="sm sm-peligro"></i>peligro aislado</span><span><i class="sm sm-baliza"></i>baliza</span></div>
     <div class="ley-fila"><span><i class="ley-linea" style="background:${COLOR.verde}"></i>agua: verde / amarillo / rojo según tu calado</span><span>${gc ? `<i class="ley-linea ancha"></i>zonas de cruce de tu eslora (${n0(aj.eslora ?? 0)} m)` : "Cargá la eslora para ver tus zonas de cruce"}</span><span>⚓ <i class="ley-punteada"></i> fondeaderos, fuera del canal del lado de las boyas rojas</span></div>
@@ -349,3 +368,6 @@ function dibujarMapa(d) {
     ${u.sinPosicion.length ? `<h3 class="sub">Novedades sin posición en el mapa</h3><ul class="reglas">${u.sinPosicion.map((x) => `<li>Nº ${esc(x.n.clave)} · km ${kmTxt(x.n.km)} · ${esc((x.n.descripcion ?? "").replace(/\s*KM\s*[\d.,]+/i, "").toLowerCase())} · <strong>${esc(x.n.estado ?? "")}</strong> — ${esc(x.motivo)}</li>`).join("")}</ul>` : ""}
     <p class="nota">Señales: planilla de la CARP (km, tipo, color, posición y destello). Fondo: © OpenStreetMap. Referencia, no oficial.</p>`;
 }
+
+// app.js arranca antes que este archivo: si la app abre en la pestana Mapa (fue la ultima usada), mostrarlo ya, sin esperar los datos nuevos.
+if (typeof pestana !== "undefined" && pestana === "mapa" && document.querySelector("#raiz .pestanas")) { mostrarMapa(); medirAltos(); }

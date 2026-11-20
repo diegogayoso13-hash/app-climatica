@@ -2,7 +2,7 @@
 const SUPABASE_URL = "https://yoxioyszauoaqiwqrpae.supabase.co";
 const SUPABASE_KEY = "sb_publishable_vMJL1gkw0u3zBAbJODQNpw_TS0avBJi";
 const VIEJO_MIN = 20;              // minutos sin dato para considerar una lectura vieja
-const VERSION_APP = 26;            // tiene que ser igual a VERSION en sw.js
+const VERSION_APP = 27;            // tiene que ser igual a VERSION en sw.js
 const REFRESCO_MS = 2 * 60 * 1000; // se actualiza cada 2 minutos con la app abierta
 const TZ = "America/Montevideo";
 const raiz = document.getElementById("raiz");
@@ -60,6 +60,7 @@ const IC = {
   ok: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
   tiempo: '<path d="M7 18a4 4 0 0 1-.6-7.96A6 6 0 0 1 18 10a4 4 0 0 1 0 8z"/><path d="M15 3.5v1.5M19.6 5.4l-1 1M21.5 10H20"/>',
   canal: '<circle cx="12" cy="5" r="2"/><path d="M12 7v14M5 12H3a9 9 0 0 0 18 0h-2M8 10h8"/>',
+  mapa: '<path d="M9 4 3 6.5V20l6-2.5 6 2.5 6-2.5V4l-6 2.5z"/><path d="M9 4v13.5M15 6.5V20"/>',
   mas: '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>',
   faro: '<path d="M9.5 6.2 12 4l2.5 2.2z"/><rect x="9.8" y="6.2" width="4.4" height="4.2" rx=".5"/><path d="M8.6 10.4h6.8M10.4 10.4l-1 9.6h5.2l-1-9.6M10 14h4M9.7 17h4.6M8 7.2l-3.5-1.3M8 9.2l-3.5 1.3M16 7.2l3.5-1.3M16 9.2l3.5 1.3"/>',
 };
@@ -164,6 +165,7 @@ function canalDatos(d) {
 }
 
 // ---------- barra de arriba ----------
+let cartelesAbiertos = false; // pestana Mapa: carteles juntos (false) o desplegados (true)
 function barra(d, cd, ag) {
   const carteles = [];
   if (avisosDesactivados()) carteles.push(`<button type="button" class="cartel amarillo" data-reactivar-avisos="1">${ic("campana")}<span>${avCaido.motivo === "bloqueado"
@@ -180,7 +182,10 @@ function barra(d, cd, ag) {
   const rojos = (ag?.filas ?? []).filter((f) => f.estado === "rojo");
   if (rojos.length) carteles.push(`<button type="button" class="cartel rojo" data-ir="sec-resumen">${ic("alerta")}<span>${rojos.length === 1 ? `Tramo en rojo: ${esc(rojos[0].t.nombre)}` : `${rojos.length} tramos en rojo`} · quedan ${m2(Math.min(...rojos.map((f) => f.quilla)))} m bajo la quilla</span><span class="ir">${ic("chev")}</span></button>`);
   if (relevNuevo(d)) carteles.push(`<button type="button" class="cartel azul" data-ir="sec-agua">${ic("campana")}<span>La CARP publicó un relevamiento nuevo</span><span class="ir">${ic("chev")}</span></button>`);
-  return `<header class="barra"><div class="barra-fila"><div class="marca">${ic("faro")}Tu Faro</div><span class="act">${sinSenal ? "Sin señal" : `Act. ${hora(Date.now())}`}</span></div>${carteles.join("")}</header>`;
+  // En la pestana Mapa, si hay mas de un cartel, se juntan en un renglon (rojo si alguno es rojo) para no achicar el mapa.
+  const nivel = carteles.some((c) => c.includes("cartel rojo")) ? "rojo" : carteles.some((c) => c.includes("cartel amarillo")) ? "amarillo" : "azul";
+  const junto = carteles.length > 1 ? `<button type="button" class="cartel ${nivel} carteles-junto" data-carteles="1" aria-expanded="${cartelesAbiertos}">${ic(nivel === "azul" ? "campana" : "alerta")}<span>${carteles.length} carteles · ${cartelesAbiertos ? "tocá para juntarlos" : "tocá para verlos"}</span><span class="ir">${ic("chev")}</span></button>` : "";
+  return `<header class="barra${carteles.length > 1 ? " varios" : ""}${cartelesAbiertos ? " abiertos" : ""}"><div class="barra-fila"><div class="marca">${ic("faro")}Tu Faro</div><span class="act">${sinSenal ? "Sin señal" : `Act. ${hora(Date.now())}`}</span></div>${junto}${carteles.join("")}</header>`;
 }
 
 // ---------- avisos en pausa (MISMOS cortes y textos que el robot: supabase/functions/avisos/evaluar.ts, pausas()) ----------
@@ -922,18 +927,61 @@ function robot(d) {
 function fuentesSec() {
   return plegable("sec-fuentes", "Fuentes y aclaraciones", `Versión ${VERSION_APP} · LIMB, cálculos, fuentes`,
     `<p class="nota" style="margin-top:0"><strong>Versión ${VERSION_APP}</strong> de Tu Faro.</p>` + Object.values(INFO).map(([t, f]) => `<h3 class="sub">${esc(t)}</h3><p class="nota" style="margin-top:0">${esc(f())}</p>`).join("") +
+    `<h3 class="sub">Mapa</h3><p class="nota" style="margin-top:0">No se usa la carta colaborativa OpenSeaMap: en el canal sus datos son viejos (2014–2019) y varias posiciones no coinciden con las señales actuales.</p>` +
     `<h3 class="sub">Aviso de uso</h3><p class="nota" style="margin-top:0">${avisoAceptado() ? `Aceptado el ${fechaHora(avisoAceptado().fecha)}` : "Todavía no aceptado"}: es una ayuda, no reemplaza al práctico ni a la información oficial. El agua por tramo es una estimación.</p>`);
 }
 const malFuente = (x) => x.detalle?.terminado ? false : (x.ultimo_error && (!x.ultimo_ok || x.ultimo_error > x.ultimo_ok)) || !x.ultimo_ok || minDesde(x.ultimo_ok) > (PLAZO_FUENTE[x.fuente] ?? VIEJO_MIN);
 
 // ---------- pestanas ----------
-const PESTANAS = [["tiempo", "Tiempo"], ["canal", "Canal"], ["mas", "Más"]];
+const PESTANAS = [["tiempo", "Tiempo"], ["canal", "Canal"], ["mapa", "Mapa"], ["mas", "Más"]];
 let pestana = PESTANAS.some(([p]) => p === leerLocal("pestana")) ? leerLocal("pestana") : "tiempo";
-function verPestana(p, { arriba = true } = {}) {
+// Mapa: ocupa todo entre la barra y las pestanas (no se desliza). Al salir de la pestana el GPS SIGUE andando si lo prendiste.
+// "Atras" del celular estando en Mapa vuelve a la pestana de antes (como antes cerraba el mapa).
+// pasoMapa: hay un paso "mapa" nuestro en el historial (se lleva la cuenta aca: el "atras" del navegador llega despues, no al instante).
+let pestanaAntesDelMapa = null, pasoMapa = !!history.state?.mapa, ignorarAtras = 0;
+try { history.scrollRestoration = "manual"; } catch {} // al sacar el paso "mapa" el navegador no tiene que mover la pantalla
+function verPestana(p, { arriba = true, desdeAtras = false } = {}) {
+  const antes = pestana;
   pestana = p; guardarLocal("pestana", p);
+  document.documentElement.classList.toggle("en-mapa", p === "mapa");
   for (const el of raiz.querySelectorAll(".pestana")) el.hidden = el.dataset.p !== p;
   for (const b of raiz.querySelectorAll(".pestanas button")) b.setAttribute("aria-current", b.dataset.pestana === p ? "page" : "false");
-  if (arriba) window.scrollTo(0, 0);
+  if (p === "mapa") {
+    if (antes !== "mapa" && !desdeAtras) { pestanaAntesDelMapa = antes; if (!pasoMapa && !ignorarAtras) { history.pushState({ mapa: 1 }, ""); pasoMapa = true; } } // con un "atras" en camino, se agrega cuando llegue
+    window.scrollTo(0, 0);
+    if (typeof mostrarMapa === "function") mostrarMapa();
+  } else {
+    if (antes === "mapa" && !desdeAtras && pasoMapa) { pasoMapa = false; ignorarAtras++; history.back(); } // saca el paso "mapa" del historial
+    if (typeof ocultarMapa === "function") ocultarMapa();
+    if (arriba) window.scrollTo(0, 0);
+  }
+  medirAltos();
+}
+window.addEventListener("popstate", () => {
+  if (ignorarAtras > 0) {
+    ignorarAtras--;
+    if (!ignorarAtras && pestana === "mapa" && !pasoMapa) { history.pushState({ mapa: 1 }, ""); pasoMapa = true; } // volviste al mapa mientras tanto
+    return;
+  }
+  if (!pasoMapa) return;
+  pasoMapa = false;
+  if (pestana === "mapa") verPestana(pestanaAntesDelMapa && pestanaAntesDelMapa !== "mapa" ? pestanaAntesDelMapa : "canal", { desdeAtras: true });
+});
+// Alto de la barra de arriba (cambia con los carteles) y de las pestanas: el mapa ocupa lo que queda en el medio.
+function medirAltos() {
+  const b = raiz.querySelector(".barra"), n = raiz.querySelector(".pestanas"), r = document.documentElement.style;
+  if (b) r.setProperty("--alto-barra", b.getBoundingClientRect().height + "px");
+  if (n) r.setProperty("--alto-pestanas", n.getBoundingClientRect().height + "px");
+  if (pestana === "mapa" && typeof MAPA !== "undefined") MAPA?.map?.invalidateSize();
+}
+addEventListener("resize", medirAltos);
+// Puntito en la pestana Mapa mientras el GPS esta prendido (se ve desde cualquier pestana).
+function marcarGps() {
+  const on = typeof GPS !== "undefined" && GPS.watch != null;
+  const b = raiz.querySelector('.pestanas button[data-pestana="mapa"]'); if (!b) return;
+  b.querySelector(".punto-gps")?.remove();
+  if (on) b.insertAdjacentHTML("beforeend", '<i class="punto-gps" title="GPS prendido"></i>');
+  b.setAttribute("aria-label", on ? "Mapa (GPS prendido)" : "Mapa");
 }
 // Ir a una seccion (desde un cartel o un renglon): cambia de pestana, la abre y la muestra debajo de la barra.
 function irA(id) {
@@ -960,12 +1008,14 @@ function render(d) {
   if (ajustesNodo.isConnected) ajustesNodo.remove(); // el formulario se conserva entre actualizaciones (no se pierde lo que estas escribiendo)
   raiz.innerHTML = barra(d, cd, ag.c) + `<main>
     <div class="pestana" data-p="tiempo">${norden(ix, d.pron6 ?? [])}${pronostico(d.pronostico ?? [], d.config, d.vis ?? [])}${realVsPron(d)}${marea(d.l24 ?? [])}${otras(ix, nombre)}${alertasSec(d)}</div>
-    <div class="pestana" data-p="canal">${ag.resumen}<button type="button" class="abrir-mapa" data-abrir-mapa="1"><span aria-hidden="true">🗺</span> Abrir mapa del canal</button>${ag.tramos}${canal(d, cd)}${remagaSecs(d, ix, aguaAj)}</div>
+    <div class="pestana" data-p="canal">${ag.resumen}<button type="button" class="ver-mapa" data-pestana="mapa">Ver en el mapa →</button>${ag.tramos}${canal(d, cd)}${remagaSecs(d, ix, aguaAj)}</div>
+    <div class="pestana" data-p="mapa"></div>
     <div class="pestana" data-p="mas"><div id="hueco-ajustes"></div>${robot(d)}${fuentesSec()}</div></main>
     <nav class="pestanas" aria-label="Secciones">${PESTANAS.map(([p, n]) => `<button type="button" data-pestana="${p}" aria-current="${p === pestana ? "page" : "false"}">${ic(p)}<span>${n}</span>${p === "mas" && robotMal ? '<i class="punto-mas" title="El robot tiene un problema"></i>' : ""}</button>`).join("")}</nav>`;
   raiz.querySelector("#hueco-ajustes").replaceWith(ajustesNodo);
   pintarPausasAjustes();
   verPestana(pestana, { arriba: false });
+  marcarGps();
   if (typeof dibujarMapa === "function" && document.getElementById("panel-mapa") && !document.getElementById("panel-mapa").hidden) dibujarMapa(d);
   for (const el of raiz.querySelectorAll("details[data-clave]")) {
     if (abiertosAhora.has(el.dataset.clave)) el.open = true;
@@ -988,7 +1038,7 @@ raiz.addEventListener("click", (ev) => {
   if (!b) return;
   if (b.dataset.marea) { mareaExtra = mareaExtra === b.dataset.marea ? null : b.dataset.marea; guardarLocal("marea_extra", mareaExtra); render(ultimos); return; }
   if (b.dataset.info) { const t = b.nextElementSibling, abrir = t.hidden; t.hidden = !abrir; b.setAttribute("aria-expanded", String(abrir)); return; }
-  if (b.dataset.abrirMapa) { abrirMapa(); return; }
+  if (b.dataset.carteles) { cartelesAbiertos = !cartelesAbiertos; render(ultimos); return; }
   if (b.dataset.pestana) { verPestana(b.dataset.pestana); return; }
   if (b.dataset.ir) { irA(b.dataset.ir); return; }
   if (b.dataset.abrirAjustes) { irA("ajustes"); setTimeout(() => form.elements.calado.focus({ preventScroll: true }), 400); return; }
@@ -1235,7 +1285,7 @@ document.getElementById("btn-aviso-ok").addEventListener("click", () => {
 colorBarraCelular();
 if (!window.MODO_PRUEBA) { // la pagina de pruebas (solo en la compu) usa las funciones sin bajar datos
   mostrarAvisoSiHaceFalta();
-  if (location.hash === "#mapa") { history.replaceState(null, "", location.pathname + location.search); setTimeout(() => abrirMapa(), 300); }
+  if (location.hash === "#mapa") { history.replaceState(null, "", location.pathname + location.search); pestana = "mapa"; guardarLocal("pestana", "mapa"); } // enlaces viejos al mapa
   const irHash = () => { const irH = location.hash.match(/^#ir=([a-z-]+)$/); if (irH) { history.replaceState(null, "", location.pathname + location.search); irDesdeAviso(irH[1]); } };
   irHash(); window.addEventListener("hashchange", irHash);
   if ("serviceWorker" in navigator) navigator.serviceWorker.addEventListener("message", (ev) => { if (typeof ev.data?.ir === "string") irDesdeAviso(ev.data.ir); });
@@ -1254,20 +1304,35 @@ if (!window.MODO_PRUEBA) { // la pagina de pruebas (solo en la compu) usa las fu
 const RECIEN_ABIERTA_MS = 15000;
 let abiertaEn = Date.now(), tocada = false, recargando = false;
 for (const ev of ["pointerdown", "keydown", "wheel", "touchstart"]) addEventListener(ev, () => { tocada = true; }, { capture: true, passive: true });
+const gpsPrendido = () => typeof GPS !== "undefined" && GPS.watch != null;
 const enUso = () => tocada || Date.now() - abiertaEn > RECIEN_ABIERTA_MS
   || document.getElementById("panel-mapa")?.hidden === false || (typeof GPS !== "undefined" && GPS.watch != null);
-function aplicarVersion(sw) { recargando = true; sw.postMessage("actualizar"); }
+function aplicarVersion(sw) { if (gpsPrendido()) { cartelVersion(sw); return; } recargando = true; sw.postMessage("actualizar"); }
+// Con el GPS prendido (en cualquier pestana) el cartel NO recarga: avisa que se actualiza cuando lo apagues.
+let swNuevo = null;
 function cartelVersion(sw) {
+  if (sw) swNuevo = sw;
+  if (!swNuevo || recargando) return;
   let b = document.getElementById("cartel-version");
   if (!b) {
     b = document.createElement("button"); b.type = "button"; b.id = "cartel-version"; b.className = "cartel-version";
-    b.innerHTML = `${ic("campana")}<span>Hay una versión nueva · <strong>Tocá para actualizar</strong></span>`;
     (document.querySelector(".app") ? document.body : document.documentElement).appendChild(b);
   }
-  b.onclick = () => { b.disabled = true; b.querySelector("span").textContent = "Actualizando…"; aplicarVersion(sw); };
+  const gps = gpsPrendido();
+  b.classList.toggle("espera", gps);
+  b.innerHTML = `${ic("campana")}<span>${gps ? "Hay una versión nueva · se actualiza cuando apagues el GPS" : "Hay una versión nueva · <strong>Tocá para actualizar</strong>"}</span>`;
+  b.onclick = () => {
+    if (gpsPrendido()) { cartelVersion(); return; } // nunca recargar con el GPS andando
+    b.disabled = true; b.querySelector("span").textContent = "Actualizando…";
+    if (swNuevo.state === "activated") location.reload(); else aplicarVersion(swNuevo); // ya quedo instalada: solo falta recargar
+  };
 }
 function vigilarVersion(reg) {
-  navigator.serviceWorker.addEventListener("controllerchange", () => { if (recargando) location.reload(); });
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (!recargando) return;
+    if (gpsPrendido()) { recargando = false; cartelVersion(); return; } // prendiste el GPS justo en ese momento: no recarga, queda el cartel
+    location.reload();
+  });
   const lista = (sw) => { if (!navigator.serviceWorker.controller) return; enUso() ? cartelVersion(sw) : aplicarVersion(sw); };
   const esperar = (sw) => sw && sw.addEventListener("statechange", () => { if (sw.state === "installed") lista(sw); });
   if (reg.waiting) lista(reg.waiting);
